@@ -1,0 +1,10 @@
+
+MSPC channels
+    * Read threads to store could use sync channel but async is probably okay
+        - Store can track how many outstanding operations it has and return overload if too many
+    * Definitely track outstanding backend operations
+        - use timestamps on ops for metrics purposes
+
+KeyValue Objects
+    * Can use pointers into the raw object buffer for KV pairs & metadata
+    * Optional BTreeMap for sorted operations
