@@ -6,6 +6,8 @@
 //! guarantees for related timestamps. Full details may be found in the following paper
 //! https://cse.buffalo.edu/tech-reports/2014-04.pdf
 //! 
+use std::fmt;
+
 extern crate time;
 
 /// Provides a HLC Clock that uses the normal system clock.
@@ -105,6 +107,12 @@ impl Timestamp {
 
     fn set(&mut self, wall_ms: u64, l: u16) {
         self.0 = wall_ms << 16 | l as u64
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Timestamp({},{})", self.wall_time_ms(), self.logical())
     }
 }
 
