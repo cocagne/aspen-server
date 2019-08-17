@@ -8,7 +8,7 @@ pub struct ObjectId(uuid::Uuid);
 
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Object({})", self.0)
+        write!(f, "ObjectId({})", self.0)
     }
 }
 
@@ -46,27 +46,32 @@ impl fmt::Display for Refcount {
 /// Optional component of an ObjectPointer that may be used to assist with locating an object
 /// slice within a DataStore. For example, a flat-file store with fixed segment sizes could encode 
 /// the segment offset within a StorePointer
-#[derive(Debug)]
-pub enum StorePointer {
-    None,
-    Small(u64),
-    Large(Vec<u8>)
-}
+#[derive(Debug, Clone)]
+pub struct StorePointer(Vec<u8>);
 
 impl fmt::Display for StorePointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StorePointer::None => write!(f, "StorePointer(None)"),
-            StorePointer::Small(u) => write!(f, "StorePointer({})", u),
-            StorePointer::Large(v) => write!(f, "StorePointer(len:{}, hash:{})", v.len(), crate::util::quick_hash(v)),
+        if self.0.len() == 0 {
+            write!(f, "StorePointer(None)")
+        } else {
+            write!(f, "StorePointer(len:{}, hash:{})", self.0.len(), crate::util::quick_hash(&self.0))
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Type {
     Data,
     KeyValue
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Data => write!(f, "Type(Data)"),
+            Type::KeyValue => write!(f, "Type(KeyValue)")
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -79,3 +84,11 @@ pub struct State {
     store_pointer: StorePointer,
     segments: Vec<std::sync::Arc<Vec<u8>>>
 }
+
+impl State {
+    pub fn size(&self) -> usize {
+        self.segments.iter().map(|v| v.len()).sum()
+    }
+}
+
+

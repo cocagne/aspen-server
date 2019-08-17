@@ -81,7 +81,7 @@ impl<T> Clock<T>
 }
 
 /// Represents an HLC Timestamp
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
 pub struct Timestamp(u64);
 
 impl Timestamp {
