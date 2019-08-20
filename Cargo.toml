@@ -10,3 +10,5 @@ edition = "2018"
 uuid = { version = "0.7", features = ["v4"] }
 time = "0.1"
 crc32fast = "1.2.0"
+integer-encoding = "1.0.7"
+bytes = "0.4.12"

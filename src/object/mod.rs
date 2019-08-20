@@ -74,6 +74,16 @@ impl fmt::Display for Type {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Crc32(u32);
+
+impl fmt::Display for Crc32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Crc32({})", self.0)
+    }
+}
+
+/// Represents the current state of an object
 #[derive(Debug)]
 pub struct State {
     object_type: Type,
@@ -82,6 +92,7 @@ pub struct State {
     refcount: Refcount,
     timestamp: crate::hlc::Timestamp,
     store_pointer: StorePointer,
+    crc: Crc32,
     segments: Vec<std::sync::Arc<Vec<u8>>>
 }
 
