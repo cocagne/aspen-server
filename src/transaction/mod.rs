@@ -32,4 +32,22 @@ impl fmt::Display for Status {
     }
 }
 
+/// Disposition of the store with respect to whether or not the transaction should be committed
+#[derive(Debug, Clone, Copy)]
+pub enum Disposition {
+    Undetermined,
+    VoteCommit,
+    VoteAbort
+}
+
+impl fmt::Display for Disposition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Disposition::Undetermined => write!(f, "Undetermined"),
+            Disposition::VoteCommit => write!(f, "VoteCommit"),
+            Disposition::VoteAbort => write!(f, "VoteAbort")
+        }
+    }
+}
+
 pub struct ObjectUpdate(uuid::Uuid, Bytes);
