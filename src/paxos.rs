@@ -11,7 +11,7 @@ pub struct ProposalId {
     peer: u8
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PersistentState {
     promised: Option<ProposalId>,
     accepted: Option<(ProposalId, bool)>

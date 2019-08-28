@@ -50,4 +50,11 @@ impl fmt::Display for Disposition {
     }
 }
 
+#[derive(Clone)]
 pub struct ObjectUpdate(uuid::Uuid, Bytes);
+
+impl ObjectUpdate {
+    pub fn len(&self) -> usize {
+        16 + self.1.len()
+    }
+}

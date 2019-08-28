@@ -16,6 +16,8 @@ use super::paxos;
 use super::store;
 use super::transaction;
 
+pub mod sweeper;
+
 /// Unique Identifier for a state save request made to the Crash Recovery Log
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct RequestId(u64);
@@ -40,15 +42,17 @@ pub trait InterfaceFactory {
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash
+#[derive(Clone)]
 pub struct TransactionRecoveryState {
     store_id: store::Id,
     serialized_transaction_description: Bytes,
     object_updates: Vec<transaction::ObjectUpdate>,
-    tx_disposition: transaction::Status,
+    tx_disposition: transaction::Disposition,
     paxos_state: paxos::PersistentState
 }
 
 /// Represents the persistent state needed to recover an allocation operation after a crash
+#[derive(Clone)]
 pub struct AllocationRecoveryState {
     store_id: store::Id,
     store_pointer: object::StorePointer,
@@ -130,6 +134,21 @@ impl Crl {
         request_id
     }
 
+    /// Drops transaction data from the log.
+    /// 
+    /// Informs the CRL that object data associated with the transaction is no longer needed
+    /// for recovery purposes and that it may be dropped from the log.
+    pub fn drop_transaction_object_data(
+        &self,
+        store_id: store::Id,
+        transaction_id: transaction::Id
+    ) {
+        self.sender.send(Request::DropTransactionData{
+            store_id: store_id,
+            transaction_id: transaction_id,
+        }).unwrap_or(()); // Explicitly ignore any errors
+    }
+
     /// Deletes the saved transaction state from the log.
     pub fn delete_transaction_state(
         &self,
@@ -202,6 +221,10 @@ enum Request {
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
+    },
+    DropTransactionData {
+        store_id: store::Id,
+        transaction_id: transaction::Id,
     },
     DeleteTransactionState {
         store_id: store::Id,

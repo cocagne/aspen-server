@@ -52,7 +52,7 @@ impl fmt::Display for Refcount {
 /// as the support for inline embedding of small data within the bytes instance rather than always
 /// allocating on the heap as a Vec<u8> would.
 #[derive(Debug, Clone)]
-pub struct StorePointer(Bytes);
+pub struct StorePointer(pub Bytes);
 
 impl fmt::Display for StorePointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

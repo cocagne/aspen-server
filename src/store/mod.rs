@@ -5,7 +5,7 @@ use std::fmt;
 /// 
 /// StoreIds are composed of the pool UUID to which the store belongs and the index of that
 /// store within the pool
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct Id {
     /// UUID of the storage pool this store belongs to
     pool_uuid: uuid::Uuid,
