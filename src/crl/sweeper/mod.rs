@@ -54,7 +54,7 @@ pub struct FileId(u16);
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct StreamId(u16);
 
-struct FileLocation {
+pub struct FileLocation {
     file_id: FileId,
     offset: u64,
     length: u32
@@ -127,8 +127,11 @@ pub trait Stream {
 
     fn id(&self) -> StreamId;
 
-    /// Returns the current file Id, Offset, & Maximum File Size
-    fn status(&self) -> (FileId, u64, u64);
+    /// Returns the last valid entry in this stream
+    fn last_entry(&self) -> Option<(u64, FileLocation)>;
+
+    /// Returns the current file Id, file UUID, Offset, & Maximum File Size
+    fn status(&self) -> (FileId, uuid::Uuid, u64, u64);
 
     /// Writes the provided data to the file provided by status()
     fn write(&mut self, data: Vec<Bytes>);
@@ -141,33 +144,58 @@ pub trait Stream {
 pub struct Sweeper<T: Stream> {
     transactions: HashMap<TxId, RefCell<Tx>>,
     allocations: HashMap<TxId, RefCell<Alloc>>,
-    buffers: Vec<RefCell<EntryBuffer>>,
+    next_buffer: Option<RefCell<EntryBuffer>>,
     current_buffer: RefCell<EntryBuffer>,
     streams: Vec<T>,
-    entry_serial: u64
+    entry_serial: u64,
+    last_entry_location: FileLocation
 }
 
 impl<T: Stream> Sweeper<T> {
 
-    pub fn new() -> Sweeper<T> {
+    pub fn new(streams: Vec<T>) -> Sweeper<T> {
+        let mut last_serial = 0;
+        let mut last_location = FileLocation {
+            file_id: FileId(0u16),
+            offset: 0u64,
+            length: 0u32
+        };
+
+        for s in &streams {
+            if let Some((serial, loc)) = s.last_entry() {
+                if serial > last_serial {
+                    last_serial = serial;
+                    last_location = loc;
+                }
+            }
+        }
+       
         Sweeper {
             transactions: HashMap::new(),
             allocations: HashMap::new(),
-            buffers: Vec::new(),
+            next_buffer: None,
             current_buffer: RefCell::new(EntryBuffer::new()),
-            streams: Vec::new(),
-            entry_serial: 0
+            streams: streams,
+            entry_serial: last_serial,
+            last_entry_location: last_location
         }
     }
 
     fn finalize_entry(&mut self) -> RefCell<EntryBuffer> {
-        mem::replace(&mut self.current_buffer,
-            self.buffers.pop().unwrap_or_else(|| RefCell::new(EntryBuffer::new())))
+        if self.next_buffer.is_none() {
+            mem::replace(&mut self.current_buffer, RefCell::new(EntryBuffer::new()))
+        } else {
+            let next = mem::replace(&mut self.next_buffer, None);
+            let current = mem::replace(&mut self.current_buffer, next.unwrap());
+            self.next_buffer = None;
+            current
+        
+        }
     }
 
     fn recycle_buffer(&mut self, buf: RefCell<EntryBuffer>) {
         buf.borrow_mut().clear();
-        self.buffers.push(buf);
+        self.next_buffer = Some(buf);
     }
 
     fn prune_data_stored_in_file(&self, file_id: FileId) {
@@ -207,8 +235,12 @@ impl<T: Stream> Sweeper<T> {
     }
 
     pub fn log_entry(&mut self, stream: &mut T) {
-
+        
         let buf = self.finalize_entry();
+
+        self.entry_serial += 1;
+
+        let mut prune_file_from_log: Option<FileId> = None;
 
         let mut txs: Vec<&RefCell<Tx>> = Vec::new();
         let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
@@ -221,20 +253,29 @@ impl<T: Stream> Sweeper<T> {
             self.allocations.get(&txid).map( |a| allocs.push(a) );
         }
 
-        let (mut file_id, mut offset, mut max_size) = stream.status();
-
-        let (data_sz, padding_sz, tail_sz, num_data_buffers) = calculate_write_size(offset, 
+        let (data_sz, tail_sz, num_data_buffers) = calculate_write_size( 
             &txs, &allocs, &buf.borrow().tx_deletions, &buf.borrow().alloc_deletions);
 
-        if offset + data_sz + padding_sz + tail_sz > max_size {
-            if let Some(prune_file_id) = stream.rotate_files() {
-                // We've already finalized the buffer for the current log entry. This method will
-                // find all tx/allocs that have data stored in the file and enter them into the
-                // next buffer
-                self.prune_data_stored_in_file(prune_file_id);
+        let (file_id, file_uuid, initial_offset, padding_sz) = {
+            let (file_id, file_uuid, offset, max_size) = stream.status();
+
+            let padding = pad_to_4k_alignment(offset, data_sz, tail_sz);
+
+            if offset + data_sz + padding + tail_sz <= max_size {
+                (file_id, file_uuid, offset, padding)
             }
-            let (file_id, offset, max_size) = stream.status();
-        }
+            else {
+                prune_file_from_log = stream.rotate_files();
+
+                let (file_id, file_uuid, offset, _) = stream.status();
+
+                (file_id, file_uuid, offset, padding)
+            }
+        };
+
+        let entry_offset = initial_offset + data_sz + padding_sz;
+
+        let mut offset = initial_offset;
 
         let mut tail = BytesMut::with_capacity((padding_sz + tail_sz) as usize);
 
@@ -250,7 +291,7 @@ impl<T: Stream> Sweeper<T> {
             l  
         };
 
-        for tx in txs {
+        for tx in txs.iter() {
             let mut mtx = tx.borrow_mut();
 
             if mtx.txd_location.is_none() {
@@ -270,7 +311,7 @@ impl<T: Stream> Sweeper<T> {
             encode_tx_state(&tx.borrow(), &mut tail);   
         }
 
-        for a in allocs.iter_mut() {
+        for a in allocs.iter() {
             let mut ma = a.borrow_mut();
 
             if ma.data_location.is_none() {
@@ -289,6 +330,44 @@ impl<T: Stream> Sweeper<T> {
         for id in &buf.borrow().alloc_deletions {
             id.encode_into(&mut tail);
         }
+
+        // ---------- Static Entry Block ----------
+
+        assert_eq!((tail.capacity() - tail.len()) as u64, STATIC_ENTRY_SIZE);
+
+        // Entry block always ends with:
+        //   entry_serial_number - 8
+        //   entry_begin_offset - 8
+        //   num_transactions - 4
+        //   num_allocations - 4
+        //   num_tx_deletions - 4
+        //   num_alloc_deletions - 4
+        //   prev_entry_file_location - 14 (2 + 8 + 4)
+        //   file_uuid - 16
+        tail.put_u64_le(self.entry_serial);
+        tail.put_u64_le(entry_offset);
+        tail.put_u32_le(txs.len() as u32);
+        tail.put_u32_le(allocs.len() as u32);
+        tail.put_u32_le(buf.borrow().tx_deletions.len() as u32);
+        tail.put_u32_le(buf.borrow().alloc_deletions.len() as u32);
+        self.last_entry_location.encode_into(&mut tail);
+        tail.put_slice(file_uuid.as_bytes());
+
+        buffers.push(tail.freeze());
+
+        stream.write(buffers);
+
+        // Prune files at the end of the process to prevent dropping file locations on transactions
+        // and allocations going into this entry
+        //
+        if let Some(prune_file_id) = prune_file_from_log {
+            // We've already finalized the buffer for the current log entry. This method will
+            // find all tx/allocs that have data stored in the file and enter them into the
+            // next buffer
+            self.prune_data_stored_in_file(prune_file_id);
+        }
+
+        self.recycle_buffer(buf);
     }
 }
 
@@ -404,32 +483,31 @@ fn encode_alloc_state<T: BufMut>(a: &Alloc, buf: &mut T) {
     buf.put_slice(&a.state.serialized_revision_guard);
 }
 
+const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
+
 /// Calculates the size required for the write.
 /// 
 /// Entry block always ends with:
 ///   entry_serial_number - 8
 ///   entry_begin_offset - 8
-///   entry_size - 4
 ///   num_transactions - 4
 ///   num_allocations - 4
 ///   num_tx_deletions - 4
 ///   num_alloc_deletions - 4
 ///   prev_entry_file_location - 14 (2 + 8 + 4)
-///   entry_hash - 16
 ///   file_uuid - 16
 /// 
 /// Returns (size-of-pre-entry-data, 4k-alignment-padding-bytes, size-of-entry-block, number-of-data-buffers)
 fn calculate_write_size(
-    offset: u64, 
     txs: &Vec<&RefCell<Tx>>, 
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
-    alloc_deletions: &Vec<TxId>) -> (u64, u64, u64, usize) {
+    alloc_deletions: &Vec<TxId>) -> (u64, u64, usize) {
 
     let mut update_count: u64 = 0;
     let mut buffer_count: usize = 0;
     let mut data: u64 = 0;
-    let mut tail: u64 = 8 + 8 + 4 + 4 + 4 + 4 + 4 + 14 + 16 + 16; 
+    let mut tail: u64 = STATIC_ENTRY_SIZE; 
 
     for tx in txs {
         let tx = tx.borrow();
@@ -466,9 +544,7 @@ fn calculate_write_size(
     tail += tx_deletions.len() as u64 * TXID_SIZE;
     tail += alloc_deletions.len() as u64 * TXID_SIZE;
 
-    let padding = pad_to_4k_alignment(offset, data, tail);
-
-    (data, padding, tail, buffer_count)
+    (data, tail, buffer_count)
 }
 
 fn pad_to_4k_alignment(offset: u64, data_size: u64, tail_size: u64) -> u64 {
