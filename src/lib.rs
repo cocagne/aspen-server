@@ -8,3 +8,7 @@ pub mod paxos;
 pub mod store;
 pub mod transaction;
 pub mod util;
+
+pub enum EncodingError {
+    ValueOutOfRange
+}

@@ -4,15 +4,15 @@
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct ProposalId {
     /// Round number
-    number: u32,
+    pub number: u32,
 
     /// Identifies which peer that generated the proposal. This is used for tie-breaking
     /// and preventing collisions which could break the algorithm
-    peer: u8
+    pub peer: u8
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PersistentState {
-    promised: Option<ProposalId>,
-    accepted: Option<(ProposalId, bool)>
+    pub promised: Option<ProposalId>,
+    pub accepted: Option<(ProposalId, bool)>
 }

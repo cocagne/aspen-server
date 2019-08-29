@@ -6,7 +6,7 @@ use bytes::Bytes;
 /// 
 /// Uniquely identifies a transaction
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
-pub struct Id(uuid::Uuid);
+pub struct Id(pub uuid::Uuid);
 
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -40,6 +40,24 @@ pub enum Disposition {
     VoteAbort
 }
 
+impl Disposition {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Disposition::Undetermined => 0u8,
+            Disposition::VoteCommit => 1u8,
+            Disposition::VoteAbort => 2u8
+        }
+    }
+    pub fn from_u8(code: u8) -> Result<Disposition, crate::EncodingError> {
+        match code {
+            0 => Ok(Disposition::Undetermined),
+            1 => Ok(Disposition::VoteCommit),
+            2 => Ok(Disposition::VoteAbort),
+            _ => Err(crate::EncodingError::ValueOutOfRange)
+        }
+    }
+}
+
 impl fmt::Display for Disposition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -51,10 +69,4 @@ impl fmt::Display for Disposition {
 }
 
 #[derive(Clone)]
-pub struct ObjectUpdate(uuid::Uuid, Bytes);
-
-impl ObjectUpdate {
-    pub fn len(&self) -> usize {
-        16 + self.1.len()
-    }
-}
+pub struct ObjectUpdate(pub uuid::Uuid, pub Bytes);

@@ -8,10 +8,10 @@ use std::fmt;
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct Id {
     /// UUID of the storage pool this store belongs to
-    pool_uuid: uuid::Uuid,
+    pub pool_uuid: uuid::Uuid,
 
     /// Index of this store within the pool
-    pool_index: u8
+    pub pool_index: u8
 }
 
 impl fmt::Display for Id {

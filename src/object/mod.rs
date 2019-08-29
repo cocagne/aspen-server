@@ -5,7 +5,7 @@ use bytes::Bytes;
 /// 
 /// Uniquely identifies an object
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub struct Id(uuid::Uuid);
+pub struct Id(pub uuid::Uuid);
 
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,6 +68,22 @@ impl fmt::Display for StorePointer {
 pub enum Kind {
     Data,
     KeyValue
+}
+
+impl Kind {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Kind::Data => 0u8,
+            Kind::KeyValue => 1u8,
+        }
+    }
+    pub fn from_u8(code: u8) -> Result<Kind, crate::EncodingError> {
+        match code {
+            0 => Ok(Kind::Data),
+            1 => Ok(Kind::KeyValue),
+            _ => Err(crate::EncodingError::ValueOutOfRange)
+        }
+    }
 }
 
 impl fmt::Display for Kind {

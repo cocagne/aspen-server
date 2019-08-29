@@ -7,6 +7,7 @@
 //! https://cse.buffalo.edu/tech-reports/2014-04.pdf
 //! 
 use std::fmt;
+use std::convert::From;
 
 extern crate time;
 
@@ -107,6 +108,18 @@ impl Timestamp {
 
     fn set(&mut self, wall_ms: u64, l: u16) {
         self.0 = wall_ms << 16 | l as u64
+    }
+}
+
+impl From<u64> for Timestamp {
+    fn from(ts: u64) -> Self {
+        Timestamp::from(ts)
+    }
+}
+
+impl From<Timestamp> for u64 {
+    fn from(ts: Timestamp) -> Self {
+        ts.to_u64()
     }
 }
 
