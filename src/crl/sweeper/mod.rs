@@ -232,7 +232,7 @@ impl BufferManager {
         
         std::mem::swap(&mut self.processing_buffer, &mut self.current_buffer);
         
-        let buf = &self.processing_buffer;
+        let buf = &self.processing_buffer.borrow();
 
         self.entry_serial += 1;
 
@@ -241,16 +241,16 @@ impl BufferManager {
         let mut txs: Vec<&RefCell<Tx>> = Vec::new();
         let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
 
-        for txid in &buf.borrow().tx_set {
+        for txid in &buf.tx_set {
             self.transactions.get(&txid).map( |tx| txs.push(tx) );
         }
 
-        for txid in &buf.borrow().alloc {
+        for txid in &buf.alloc {
             self.allocations.get(&txid).map( |a| allocs.push(a) );
         }
 
         let (data_sz, tail_sz, num_data_buffers) = calculate_write_size( 
-            &txs, &allocs, &buf.borrow().tx_deletions, &buf.borrow().alloc_deletions);
+            &txs, &allocs, &buf.tx_deletions, &buf.alloc_deletions);
 
         let (file_id, file_uuid, initial_offset, padding_sz) = {
             let (file_id, file_uuid, offset, max_size) = stream.status();
@@ -319,11 +319,11 @@ impl BufferManager {
             encode_alloc_state(&a.borrow(), &mut tail);
         }
 
-        for id in &buf.borrow().tx_deletions {
+        for id in &buf.tx_deletions {
             id.encode_into(&mut tail);   
         }
 
-        for id in &buf.borrow().alloc_deletions {
+        for id in &buf.alloc_deletions {
             id.encode_into(&mut tail);
         }
 
@@ -344,8 +344,8 @@ impl BufferManager {
         tail.put_u64_le(entry_offset);
         tail.put_u32_le(txs.len() as u32);
         tail.put_u32_le(allocs.len() as u32);
-        tail.put_u32_le(buf.borrow().tx_deletions.len() as u32);
-        tail.put_u32_le(buf.borrow().alloc_deletions.len() as u32);
+        tail.put_u32_le(buf.tx_deletions.len() as u32);
+        tail.put_u32_le(buf.alloc_deletions.len() as u32);
         self.last_entry_location.encode_into(&mut tail);
         tail.put_slice(file_uuid.as_bytes());
 
@@ -353,6 +353,8 @@ impl BufferManager {
 
         stream.write(buffers);
 
+        drop(buf);
+        
         self.processing_buffer.borrow_mut().clear();
 
         // Prune files at the end of the process to prevent dropping file locations on transactions
