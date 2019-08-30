@@ -28,7 +28,7 @@ use std::mem;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use bytes::{Bytes, BytesMut, BufMut};
+use bytes::{Bytes, Buf, BytesMut, BufMut};
 
 use crate::store;
 use crate::transaction;
@@ -42,6 +42,16 @@ impl TxId {
         buf.put_slice(self.0.pool_uuid.as_bytes());
         buf.put_u8(self.0.pool_index);
         buf.put_slice((self.1).0.as_bytes());
+    }
+
+    fn decode_from<T: Buf>(buf: &mut T) -> TxId {
+        let mut ubytes: [u8; 16] = [0; 16];
+        buf.copy_to_slice(&mut ubytes);
+        let pool_uuid = uuid::Uuid::from_bytes(ubytes);
+        let pool_index = buf.get_u8();
+        buf.copy_to_slice(&mut ubytes);
+        let transaction_id = transaction::Id(uuid::Uuid::from_bytes(ubytes));
+        TxId(store::Id {pool_uuid, pool_index }, transaction_id)
     }
 }
 
@@ -64,6 +74,17 @@ impl FileLocation {
         buf.put_u16_le(self.file_id.0);
         buf.put_u64_le(self.offset);
         buf.put_u32_le(self.length);
+    }
+
+    fn decode_from<T: Buf>(buf: &mut T) -> FileLocation {
+        let file_id = buf.get_u16_le();
+        let offset = buf.get_u64_le();
+        let length = buf.get_u32_le();
+        FileLocation {
+            file_id : FileId(file_id),
+            offset,
+            length
+        }
     }
 }
 
@@ -353,8 +374,8 @@ impl BufferManager {
 
         stream.write(buffers);
 
-        drop(buf);
-        
+        drop(buf); // Drop immutable borrow so we can re-borrow as mutable and clear the buffer
+
         self.processing_buffer.borrow_mut().clear();
 
         // Prune files at the end of the process to prevent dropping file locations on transactions
