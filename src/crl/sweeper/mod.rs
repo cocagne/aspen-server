@@ -153,7 +153,7 @@ pub trait Stream {
 pub struct BufferManager {
     transactions: HashMap<TxId, RefCell<Tx>>,
     allocations: HashMap<TxId, RefCell<Alloc>>,
-    next_buffer: Option<RefCell<EntryBuffer>>,
+    processing_buffer: RefCell<EntryBuffer>,
     current_buffer: RefCell<EntryBuffer>,
     entry_serial: u64,
     last_entry_location: FileLocation
@@ -181,7 +181,7 @@ impl BufferManager {
         BufferManager {
             transactions: HashMap::new(),
             allocations: HashMap::new(),
-            next_buffer: None,
+            processing_buffer: RefCell::new(EntryBuffer::new()),
             current_buffer: RefCell::new(EntryBuffer::new()),
             entry_serial: last_serial,
             last_entry_location: last_location
@@ -190,23 +190,6 @@ impl BufferManager {
 
     fn is_empty(&self) -> bool {
         self.current_buffer.borrow().is_empty()
-    }
-
-    fn finalize_entry(&mut self) -> RefCell<EntryBuffer> {
-        if self.next_buffer.is_none() {
-            mem::replace(&mut self.current_buffer, RefCell::new(EntryBuffer::new()))
-        } else {
-            let next = mem::replace(&mut self.next_buffer, None);
-            let current = mem::replace(&mut self.current_buffer, next.unwrap());
-            self.next_buffer = None;
-            current
-        
-        }
-    }
-
-    fn recycle_buffer(&mut self, buf: RefCell<EntryBuffer>) {
-        buf.borrow_mut().clear();
-        self.next_buffer = Some(buf);
     }
 
     fn prune_data_stored_in_file(&self, file_id: FileId) {
@@ -247,7 +230,9 @@ impl BufferManager {
 
     pub fn log_entry<T: Stream>(&mut self, stream: &T) {
         
-        let buf = self.finalize_entry();
+        std::mem::swap(&mut self.processing_buffer, &mut self.current_buffer);
+        
+        let buf = &self.processing_buffer;
 
         self.entry_serial += 1;
 
@@ -368,6 +353,8 @@ impl BufferManager {
 
         stream.write(buffers);
 
+        self.processing_buffer.borrow_mut().clear();
+
         // Prune files at the end of the process to prevent dropping file locations on transactions
         // and allocations going into this entry
         //
@@ -377,8 +364,6 @@ impl BufferManager {
             // next buffer
             self.prune_data_stored_in_file(prune_file_id);
         }
-
-        self.recycle_buffer(buf);
     }
 }
 
