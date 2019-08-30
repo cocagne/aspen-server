@@ -28,9 +28,8 @@ use std::mem;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use bytes::{Bytes, BytesMut, Buf, BufMut};
+use bytes::{Bytes, BytesMut, BufMut};
 
-use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
@@ -52,7 +51,7 @@ const TXID_SIZE: u64 = 17 + 16;
 pub struct FileId(u16);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct StreamId(u16);
+pub struct StreamId(usize);
 
 pub struct FileLocation {
     file_id: FileId,
@@ -82,10 +81,10 @@ struct Alloc {
     state: AllocationRecoveryState
 }
 
-struct Request {
-    client_id: super::ClientId,
-    request_id: super::RequestId
-}
+// struct Request {
+//     client_id: super::ClientId,
+//     request_id: super::RequestId
+// }
 
 struct EntryBuffer {
     requests: Vec<super::RequestId>,
@@ -114,6 +113,12 @@ impl EntryBuffer {
         self.alloc_deletions.clear();
     }
 
+    fn is_empty(&self) -> bool {
+        self.requests.is_empty() && self.tx_set.is_empty() &&
+        self.tx_deletions.is_empty() && self.alloc.is_empty() &&
+        self.alloc_deletions.is_empty()
+    }
+
     fn add_transaction(&mut self, tx_id: TxId) {
         self.tx_set.insert(tx_id);
     }
@@ -125,7 +130,11 @@ impl EntryBuffer {
 
 pub trait Stream {
 
-    fn id(&self) -> StreamId;
+    /// Assigns the ID for this stream
+    fn set_id(&self, id: StreamId);
+
+    /// Returns true iff this stream is ready for writing
+    fn is_ready(&self) -> bool;
 
     /// Returns the last valid entry in this stream
     fn last_entry(&self) -> Option<(u64, FileLocation)>;
@@ -134,26 +143,25 @@ pub trait Stream {
     fn status(&self) -> (FileId, uuid::Uuid, u64, u64);
 
     /// Writes the provided data to the file provided by status()
-    fn write(&mut self, data: Vec<Bytes>);
+    fn write(&self, data: Vec<Bytes>);
 
     /// Rotates the underlying files and optionally returns a FileId
     /// to prune entries from
-    fn rotate_files(&mut self) -> Option<FileId>;
+    fn rotate_files(&self) -> Option<FileId>;
 }
 
-pub struct Sweeper<T: Stream> {
+pub struct BufferManager {
     transactions: HashMap<TxId, RefCell<Tx>>,
     allocations: HashMap<TxId, RefCell<Alloc>>,
     next_buffer: Option<RefCell<EntryBuffer>>,
     current_buffer: RefCell<EntryBuffer>,
-    streams: Vec<T>,
     entry_serial: u64,
     last_entry_location: FileLocation
 }
 
-impl<T: Stream> Sweeper<T> {
+impl BufferManager {
 
-    pub fn new(streams: Vec<T>) -> Sweeper<T> {
+    pub fn new<T: Stream>(streams: &Vec<T>) -> BufferManager {
         let mut last_serial = 0;
         let mut last_location = FileLocation {
             file_id: FileId(0u16),
@@ -161,7 +169,7 @@ impl<T: Stream> Sweeper<T> {
             length: 0u32
         };
 
-        for s in &streams {
+        for s in streams {
             if let Some((serial, loc)) = s.last_entry() {
                 if serial > last_serial {
                     last_serial = serial;
@@ -170,15 +178,18 @@ impl<T: Stream> Sweeper<T> {
             }
         }
        
-        Sweeper {
+        BufferManager {
             transactions: HashMap::new(),
             allocations: HashMap::new(),
             next_buffer: None,
             current_buffer: RefCell::new(EntryBuffer::new()),
-            streams: streams,
             entry_serial: last_serial,
             last_entry_location: last_location
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.current_buffer.borrow().is_empty()
     }
 
     fn finalize_entry(&mut self) -> RefCell<EntryBuffer> {
@@ -234,7 +245,7 @@ impl<T: Stream> Sweeper<T> {
         }
     }
 
-    pub fn log_entry(&mut self, stream: &mut T) {
+    pub fn log_entry<T: Stream>(&mut self, stream: &T) {
         
         let buf = self.finalize_entry();
 
@@ -368,6 +379,40 @@ impl<T: Stream> Sweeper<T> {
         }
 
         self.recycle_buffer(buf);
+    }
+}
+
+pub struct Sweeper<T: Stream> {
+    streams: Vec<T>,
+    buf_mgr: BufferManager
+}
+
+impl<T: Stream> Sweeper<T> {
+
+    pub fn new(streams: Vec<T>) -> Sweeper<T> {
+        let buf_mgr = BufferManager::new(&streams);
+
+        Sweeper {
+            streams: streams,
+            buf_mgr: buf_mgr
+        }
+    }
+
+    fn find_ready_stream(&self) -> Option<usize> {
+        for (idx, s) in self.streams.iter().enumerate() {
+            if s.is_ready() {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    pub fn commit_entry(&mut self) {
+        if ! self.buf_mgr.is_empty() {
+            if let Some(idx) = self.find_ready_stream() {
+                self.buf_mgr.log_entry(&self.streams[idx]);
+            }
+        }
     }
 }
 
