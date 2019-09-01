@@ -438,6 +438,12 @@ fn zfill<T: BufMut>(nbytes: u64, buf: &mut T) {
     }
 }
 
+// fn decode_tx_state<T: Buf>(buf: &mut T) -> Tx {
+//     let tx_id = TxId::decode_from(&mut buf);
+//     let std_len = buf.get_u16_le();
+//     let serialized_transaction_description = Bytes::with_capacity(std_len as usize);
+
+//}
 // pub struct TransactionRecoveryState {
 //     store_id: store::Id, 17
 //     transaction_id: 16
