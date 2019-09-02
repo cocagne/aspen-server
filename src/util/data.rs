@@ -178,25 +178,19 @@ impl DataMut {
         a
     }
     pub fn get_u16_le(&mut self) -> u16 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1]];
+        let r = get_u16_le(&self.v, self.offset);
         self.offset += 2;
-        u16::from_le_bytes(a)
+        r
     }
     pub fn get_u32_le(&mut self) -> u32 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1], v[o+2], v[o+3]];
+        let r = get_u32_le(&self.v, self.offset);
         self.offset += 4;
-        u32::from_le_bytes(a)
+        r
     }
     pub fn get_u64_le(&mut self) -> u64 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
+        let r = get_u64_le(&self.v, self.offset);
         self.offset += 8;
-        u64::from_le_bytes(a)
+        r
     }
 
     pub fn get_i8(&mut self) -> i8 {
@@ -213,25 +207,19 @@ impl DataMut {
     }
 
     pub fn get_u16_be(&mut self) -> u16 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1]];
+        let r = get_u16_be(&self.v, self.offset);
         self.offset += 2;
-        u16::from_be_bytes(a)
+        r
     }
     pub fn get_u32_be(&mut self) -> u32 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1], v[o+2], v[o+3]];
+        let r = get_u32_be(&self.v, self.offset);
         self.offset += 4;
-        u32::from_be_bytes(a)
+        r
     }
     pub fn get_u64_be(&mut self) -> u64 {
-        let v = &self.v;
-        let o = self.offset;
-        let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
+        let r = get_u64_be(&self.v, self.offset);
         self.offset += 8;
-        u64::from_be_bytes(a)
+        r
     }
 
     pub fn get_i16_be(&mut self) -> i16 {
@@ -243,6 +231,64 @@ impl DataMut {
     pub fn get_i64_be(&mut self) -> i64 {
         self.get_u64_be() as i64
     }
+}
+
+pub fn get_u8(v: &Vec<u8>, offset: usize) -> u8 {
+    v[offset]
+}
+pub fn get_u16_le(v: &Vec<u8>, offset: usize) -> u16 {
+    let o = offset;
+    let a = [v[o], v[o+1]];
+    u16::from_le_bytes(a)
+}
+pub fn get_u32_le(v: &Vec<u8>, offset: usize) -> u32 {
+    let o = offset;
+    let a = [v[o], v[o+1], v[o+2], v[o+3]];
+    u32::from_le_bytes(a)
+}
+pub fn get_u64_le(v: &Vec<u8>, offset: usize) -> u64 {
+    let o = offset;
+    let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
+    u64::from_le_bytes(a)
+}
+
+pub fn get_i8(v: &Vec<u8>, offset: usize) -> i8 {
+    get_u8(v, offset) as i8
+}
+pub fn get_i16_le(v: &Vec<u8>, offset: usize) -> i16 {
+    get_u16_le(v, offset) as i16
+}
+pub fn get_i32_le(v: &Vec<u8>, offset: usize) -> i32 {
+    get_u32_le(v, offset) as i32
+}
+pub fn get_i64_le(v: &Vec<u8>, offset: usize) -> i64 {
+    get_u64_le(v, offset) as i64
+}
+
+pub fn get_u16_be(v: &Vec<u8>, offset: usize) -> u16 {
+    let o = offset;
+    let a = [v[o], v[o+1]];
+    u16::from_be_bytes(a)
+}
+pub fn get_u32_be(v: &Vec<u8>, offset: usize) -> u32 {
+    let o = offset;
+    let a = [v[o], v[o+1], v[o+2], v[o+3]];
+    u32::from_be_bytes(a)
+}
+pub fn get_u64_be(v: &Vec<u8>, offset: usize) -> u64 {
+    let o = offset;
+    let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
+    u64::from_be_bytes(a)
+}
+
+pub fn get_i16_be(v: &Vec<u8>, offset: usize) -> i16 {
+    get_u16_be(v, offset) as i16
+}
+pub fn get_i32_be(v: &Vec<u8>, offset: usize) -> i32 {
+    get_u32_be(v, offset) as i32
+}
+pub fn get_i64_be(v: &Vec<u8>, offset: usize) -> i64 {
+    get_u64_be(v, offset) as i64
 }
 
 #[cfg(test)]
