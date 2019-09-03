@@ -1,9 +1,109 @@
 
 use std::sync::Arc;
+use std::ops;
 
 pub struct DataMut {
     v: Vec<u8>,
     offset: usize
+}
+
+pub struct Data {
+    pub buffer: Vec<u8>,
+    offset: usize
+}
+
+pub struct ArcData {
+    pub buffer: Arc<Vec<u8>>,
+    offset: usize
+}
+
+pub trait DataReader {
+    fn raw(&self) -> &Vec<u8>;
+
+    fn offset(&self) -> usize;
+
+    fn set_offset(&mut self, new_offset: usize);
+
+    fn len(&self) -> usize {
+        self.raw().len()
+    }
+
+    fn incr_offset(&mut self, inc: usize) {
+        self.set_offset(self.offset() + inc);
+    }
+
+    fn get_slice(&mut self, range: &ops::Range<usize>) -> &[u8] {
+        let o = self.offset();
+        self.incr_offset(range.end - range.start);
+        let s = &self.raw()[o+range.start .. o+range.end];
+        s
+    }
+
+    fn get_u8(&mut self) -> u8 {
+        let a = self.raw()[self.offset()];
+        self.incr_offset(1);
+        a
+    }
+    fn get_u16_le(&mut self) -> u16 {
+        let v = self.raw();
+        let r = get_u16_le(v, self.offset());
+        self.incr_offset(2);
+        r
+    }
+    fn get_u32_le(&mut self) -> u32 {
+        let v = self.raw();
+        let r = get_u32_le(v, self.offset());
+        self.incr_offset(4);
+        r
+    }
+    fn get_u64_le(&mut self) -> u64 {
+        let v = self.raw();
+        let r = get_u64_le(v, self.offset());
+        self.incr_offset(8);
+        r
+    }
+
+    fn get_i8(&mut self) -> i8 {
+        self.get_u8() as i8
+    }
+    fn get_i16_le(&mut self) -> i16 {
+        self.get_u16_le() as i16
+    }
+    fn get_i32_le(&mut self) -> i32 {
+        self.get_u32_le() as i32
+    }
+    fn get_i64_le(&mut self) -> i64 {
+        self.get_u64_le() as i64
+    }
+
+    fn get_u16_be(&mut self) -> u16 {
+        let v = self.raw();
+        let r = get_u16_be(v, self.offset());
+        self.incr_offset(2);
+        r
+    }
+    fn get_u32_be(&mut self) -> u32 {
+        let v = self.raw();
+        let r = get_u32_be(v, self.offset());
+        self.incr_offset(4);
+        r
+    }
+    fn get_u64_be(&mut self) -> u64 {
+        let v = self.raw();
+        let r = get_u64_be(v, self.offset());
+        self.incr_offset(8);
+        r
+    }
+
+    fn get_i16_be(&mut self) -> i16 {
+        self.get_u16_be() as i16
+    }
+    fn get_i32_be(&mut self) -> i32 {
+        self.get_u32_be() as i32
+    }
+    fn get_i64_be(&mut self) -> i64 {
+        self.get_u64_be() as i64
+    }
 }
 
 impl DataMut {
@@ -13,19 +113,21 @@ impl DataMut {
             offset : 0
         }
     }
+    pub fn finalize(self) -> Data {
+        Data {
+            buffer: self.v,
+            offset: 0
+        }
+    }
     pub fn capacity(&self) -> usize {
         self.v.capacity()
     }
-    pub fn len(&self) -> usize {
-        self.v.len()
-    }
-    pub fn offset(&self) -> usize {
-        self.offset
-    }
+    
     pub fn set_offset(&mut self, new_offset: usize) {
         assert!(new_offset <= self.v.len(), "Attempted to set offset the end of valid data");
         self.offset = new_offset;
     }
+
     pub fn put(&mut self, s: &[u8]) {
         assert!(self.offset + s.len() <= self.capacity(), "Buffer overflow");
 
@@ -173,76 +275,79 @@ impl DataMut {
             self.offset += SIZE;
         }
     }
+}
 
-    pub fn get_u8(&mut self) -> u8 {
-        let a = self.v[self.offset];
-        self.offset += 1;
-        a
-    }
-    pub fn get_u16_le(&mut self) -> u16 {
-        let r = get_u16_le(&self.v, self.offset);
-        self.offset += 2;
-        r
-    }
-    pub fn get_u32_le(&mut self) -> u32 {
-        let r = get_u32_le(&self.v, self.offset);
-        self.offset += 4;
-        r
-    }
-    pub fn get_u64_le(&mut self) -> u64 {
-        let r = get_u64_le(&self.v, self.offset);
-        self.offset += 8;
-        r
+impl DataReader for DataMut {
+    fn raw(&self) -> &Vec<u8> {
+        &self.v
     }
 
-    pub fn get_i8(&mut self) -> i8 {
-        self.get_u8() as i8
-    }
-    pub fn get_i16_le(&mut self) -> i16 {
-        self.get_u16_le() as i16
-    }
-    pub fn get_i32_le(&mut self) -> i32 {
-        self.get_u32_le() as i32
-    }
-    pub fn get_i64_le(&mut self) -> i64 {
-        self.get_u64_le() as i64
+    fn offset(&self) -> usize {
+        self.offset
     }
 
-    pub fn get_u16_be(&mut self) -> u16 {
-        let r = get_u16_be(&self.v, self.offset);
-        self.offset += 2;
-        r
-    }
-    pub fn get_u32_be(&mut self) -> u32 {
-        let r = get_u32_be(&self.v, self.offset);
-        self.offset += 4;
-        r
-    }
-    pub fn get_u64_be(&mut self) -> u64 {
-        let r = get_u64_be(&self.v, self.offset);
-        self.offset += 8;
-        r
-    }
-
-    pub fn get_i16_be(&mut self) -> i16 {
-        self.get_u16_be() as i16
-    }
-    pub fn get_i32_be(&mut self) -> i32 {
-        self.get_u32_be() as i32
-    }
-    pub fn get_i64_be(&mut self) -> i64 {
-        self.get_u64_be() as i64
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
     }
 }
 
-pub struct ArcData {
-    pub buffer: Arc<Vec<u8>>
+impl DataReader for Data {
+    fn raw(&self) -> &Vec<u8> {
+        &self.buffer
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
+    }
+}
+
+impl DataReader for ArcData {
+    fn raw(&self) -> &Vec<u8> {
+        &self.buffer
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
+    }
+}
+
+impl Data {
+    pub fn new(buffer: Vec<u8>) -> Data {
+        Data { buffer, offset: 0}
+    }
 }
 
 impl ArcData {
     pub fn new(buffer: Vec<u8>) -> ArcData {
         ArcData {
-            buffer: Arc::new(buffer)
+            buffer: Arc::new(buffer),
+            offset: 0
+        }
+    }
+}
+
+impl From<DataMut> for Data {
+    fn from(data_mut: DataMut) -> Data {
+        Data {
+            buffer: data_mut.v,
+            offset: data_mut.offset
+        }
+    }
+}
+
+impl From<Data> for DataMut {
+    fn from(data: Data) -> DataMut {
+        Data {
+            v: data.buffer,
+            offset: data.offset
         }
     }
 }
@@ -250,6 +355,15 @@ impl ArcData {
 impl From<DataMut> for ArcData {
     fn from(data_mut: DataMut) -> ArcData {
         ArcData::new(data_mut.v)
+    }
+}
+
+impl From<Data> for ArcData {
+    fn from(data: Data) -> ArcData {
+        ArcData {
+            buffer: Arc::new(data.buffer),
+            offset: data.offset
+        }
     }
 }
 
