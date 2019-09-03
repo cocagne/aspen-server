@@ -345,7 +345,7 @@ impl From<DataMut> for Data {
 
 impl From<Data> for DataMut {
     fn from(data: Data) -> DataMut {
-        Data {
+        DataMut {
             v: data.buffer,
             offset: data.offset
         }
