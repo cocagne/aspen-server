@@ -1,4 +1,6 @@
 
+use std::sync::Arc;
+
 pub struct DataMut {
     v: Vec<u8>,
     offset: usize
@@ -233,61 +235,79 @@ impl DataMut {
     }
 }
 
-pub fn get_u8(v: &Vec<u8>, offset: usize) -> u8 {
+pub struct ArcData {
+    pub buffer: Arc<Vec<u8>>
+}
+
+impl ArcData {
+    pub fn new(buffer: Vec<u8>) -> ArcData {
+        ArcData {
+            buffer: Arc::new(buffer)
+        }
+    }
+}
+
+impl From<DataMut> for ArcData {
+    fn from(data_mut: DataMut) -> ArcData {
+        ArcData::new(data_mut.v)
+    }
+}
+
+pub fn get_u8(v: &[u8], offset: usize) -> u8 {
     v[offset]
 }
-pub fn get_u16_le(v: &Vec<u8>, offset: usize) -> u16 {
+pub fn get_u16_le(v: &[u8], offset: usize) -> u16 {
     let o = offset;
     let a = [v[o], v[o+1]];
     u16::from_le_bytes(a)
 }
-pub fn get_u32_le(v: &Vec<u8>, offset: usize) -> u32 {
+pub fn get_u32_le(v: &[u8], offset: usize) -> u32 {
     let o = offset;
     let a = [v[o], v[o+1], v[o+2], v[o+3]];
     u32::from_le_bytes(a)
 }
-pub fn get_u64_le(v: &Vec<u8>, offset: usize) -> u64 {
+pub fn get_u64_le(v: &[u8], offset: usize) -> u64 {
     let o = offset;
     let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
     u64::from_le_bytes(a)
 }
 
-pub fn get_i8(v: &Vec<u8>, offset: usize) -> i8 {
+pub fn get_i8(v: &[u8], offset: usize) -> i8 {
     get_u8(v, offset) as i8
 }
-pub fn get_i16_le(v: &Vec<u8>, offset: usize) -> i16 {
+pub fn get_i16_le(v: &[u8], offset: usize) -> i16 {
     get_u16_le(v, offset) as i16
 }
-pub fn get_i32_le(v: &Vec<u8>, offset: usize) -> i32 {
+pub fn get_i32_le(v: &[u8], offset: usize) -> i32 {
     get_u32_le(v, offset) as i32
 }
-pub fn get_i64_le(v: &Vec<u8>, offset: usize) -> i64 {
+pub fn get_i64_le(v: &[u8], offset: usize) -> i64 {
     get_u64_le(v, offset) as i64
 }
 
-pub fn get_u16_be(v: &Vec<u8>, offset: usize) -> u16 {
+pub fn get_u16_be(v: &[u8], offset: usize) -> u16 {
     let o = offset;
     let a = [v[o], v[o+1]];
     u16::from_be_bytes(a)
 }
-pub fn get_u32_be(v: &Vec<u8>, offset: usize) -> u32 {
+pub fn get_u32_be(v: &[u8], offset: usize) -> u32 {
     let o = offset;
     let a = [v[o], v[o+1], v[o+2], v[o+3]];
     u32::from_be_bytes(a)
 }
-pub fn get_u64_be(v: &Vec<u8>, offset: usize) -> u64 {
+pub fn get_u64_be(v: &[u8], offset: usize) -> u64 {
     let o = offset;
     let a = [v[o], v[o+1], v[o+2], v[o+3], v[o+4], v[o+5], v[o+6], v[o+7]];
     u64::from_be_bytes(a)
 }
 
-pub fn get_i16_be(v: &Vec<u8>, offset: usize) -> i16 {
+pub fn get_i16_be(v: &[u8], offset: usize) -> i16 {
     get_u16_be(v, offset) as i16
 }
-pub fn get_i32_be(v: &Vec<u8>, offset: usize) -> i32 {
+pub fn get_i32_be(v: &[u8], offset: usize) -> i32 {
     get_u32_be(v, offset) as i32
 }
-pub fn get_i64_be(v: &Vec<u8>, offset: usize) -> i64 {
+pub fn get_i64_be(v: &[u8], offset: usize) -> i64 {
     get_u64_be(v, offset) as i64
 }
 

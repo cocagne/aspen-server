@@ -1,4 +1,10 @@
 
+Rather than pointer-heavy approach, create a LocalUpdates struct with a single pointer and an 
+array of (UUID, offset, length) values. They always arrive together and are used together. No
+need to treat each individually. For writes, we can use the LocalUpdates structure as-is and
+send the index to the object-specific entry
+
+
 MSPC channels
     * Read threads to store could use sync channel but async is probably okay
         - Store can track how many outstanding operations it has and return overload if too many

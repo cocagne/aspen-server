@@ -44,26 +44,6 @@ impl fmt::Display for Refcount {
     }
 }
 
-/// Optional component of an ObjectPointer that may be used to assist with locating an object
-/// slice within a DataStore. For example, a flat-file store with fixed segment sizes could encode 
-/// the segment offset within a StorePointer
-/// 
-/// This wraps a Bytes instance to take advantage of both the API the bytes crate provides as well
-/// as the support for inline embedding of small data within the bytes instance rather than always
-/// allocating on the heap as a Vec<u8> would.
-#[derive(Debug, Clone)]
-pub struct StorePointer(pub Bytes);
-
-impl fmt::Display for StorePointer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.len() == 0 {
-            write!(f, "StorePointer(None)")
-        } else {
-            write!(f, "StorePointer(len:{}, hash:{})", self.0.len(), crate::util::quick_hash(&self.0))
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Kind {
     Data,
@@ -112,7 +92,7 @@ pub struct State {
     revision: Revision,
     refcount: Refcount,
     timestamp: crate::hlc::Timestamp,
-    store_pointer: StorePointer,
+    store_pointer: super::store::Pointer,
     crc: Crc32,
     segments: Vec<std::sync::Arc<Vec<u8>>>
 }

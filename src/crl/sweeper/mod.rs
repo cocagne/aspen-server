@@ -519,8 +519,18 @@ fn encode_alloc_state<T: BufMut>(a: &Alloc, buf: &mut T) {
     let tx_id = TxId(a.state.store_id, a.state.allocation_transaction_id);
     tx_id.encode_into(buf);
 
-    buf.put_u32_le(a.state.store_pointer.0.len() as u32);
-    buf.put_slice(&a.state.store_pointer.0);
+    match &a.state.store_pointer {
+        store::Pointer::None => buf.put_u32_le(0),
+        store::Pointer::Short{nbytes, content} => {
+            buf.put_u32_le(*nbytes as u32);
+            buf.put_slice(&content[0..*(nbytes) as usize]);
+        },
+        store::Pointer::Long{content} => {
+            buf.put_u32_le(content.len() as u32);
+            buf.put_slice(content);
+        }
+    };
+
     buf.put_slice(a.state.id.0.as_bytes());
     buf.put_u8(a.state.kind.to_u8());
     buf.put_u32_le(match a.state.size {
@@ -597,7 +607,7 @@ fn calculate_write_size(
             buffer_count += 1;
         }
         
-        tail += a.state.store_pointer.0.len() as u64 + a.state.serialized_revision_guard.len() as u64;
+        tail += a.state.store_pointer.len() as u64 + a.state.serialized_revision_guard.len() as u64;
     }
 
     tail += tx_deletions.len() as u64 * TXID_SIZE;

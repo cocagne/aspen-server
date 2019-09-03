@@ -55,7 +55,7 @@ pub struct TransactionRecoveryState {
 #[derive(Clone)]
 pub struct AllocationRecoveryState {
     store_id: store::Id,
-    store_pointer: object::StorePointer,
+    store_pointer: store::Pointer,
     id: object::Id,
     kind: object::Kind,
     size: Option<u32>,
@@ -167,7 +167,7 @@ impl Crl {
     pub fn save_allocation_state(
         &mut self,
         store_id: store::Id,
-        store_pointer: object::StorePointer,
+        store_pointer: store::Pointer,
         id: object::Id,
         kind: object::Kind,
         size: Option<u32>,
