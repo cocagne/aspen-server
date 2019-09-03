@@ -20,16 +20,10 @@
 //! 
 //! 
 
-
-
-
-
-use std::mem;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use bytes::{Bytes, Buf, BytesMut, BufMut};
-
+use crate::{ArcDataSlice, Data, DataMut, DataReader};
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
@@ -38,13 +32,13 @@ use super::{TransactionRecoveryState, AllocationRecoveryState};
 struct TxId(store::Id, transaction::Id);
 
 impl TxId {
-    fn encode_into<T: BufMut>(&self, buf: &mut T) {
+    fn encode_into(&self, buf: &mut DataMut) {
         buf.put_slice(self.0.pool_uuid.as_bytes());
         buf.put_u8(self.0.pool_index);
         buf.put_slice((self.1).0.as_bytes());
     }
 
-    fn decode_from<T: Buf>(buf: &mut T) -> TxId {
+    fn decode_from(buf: &mut Data) -> TxId {
         let mut ubytes: [u8; 16] = [0; 16];
         buf.copy_to_slice(&mut ubytes);
         let pool_uuid = uuid::Uuid::from_bytes(ubytes);
@@ -70,13 +64,13 @@ pub struct FileLocation {
 }
 
 impl FileLocation {
-    fn encode_into<T: BufMut>(&self, buf: &mut T) {
+    fn encode_into(&self, buf: &mut DataMut) {
         buf.put_u16_le(self.file_id.0);
         buf.put_u64_le(self.offset);
         buf.put_u32_le(self.length);
     }
 
-    fn decode_from<T: Buf>(buf: &mut T) -> FileLocation {
+    fn decode_from(buf: &mut Data) -> FileLocation {
         let file_id = buf.get_u16_le();
         let offset = buf.get_u64_le();
         let length = buf.get_u32_le();
@@ -164,7 +158,7 @@ pub trait Stream {
     fn status(&self) -> (FileId, uuid::Uuid, u64, u64);
 
     /// Writes the provided data to the file provided by status()
-    fn write(&self, data: Vec<Bytes>);
+    fn write(&self, data: Vec<ArcDataSlice>);
 
     /// Rotates the underlying files and optionally returns a FileId
     /// to prune entries from
@@ -294,16 +288,16 @@ impl BufferManager {
 
         let mut offset = initial_offset;
 
-        let mut tail = BytesMut::with_capacity((padding_sz + tail_sz) as usize);
+        let mut tail = DataMut::with_capacity((padding_sz + tail_sz) as usize);
 
-        zfill(padding_sz, &mut tail);
+        tail.zfill(padding_sz);
 
-        let mut buffers = Vec::<Bytes>::with_capacity(num_data_buffers + 1);
+        let mut buffers = Vec::<ArcDataSlice>::with_capacity(num_data_buffers + 1);
 
-        let mut push_data_buffer = |b: &Bytes| -> FileLocation {
+        let mut push_data_buffer = |b: ArcDataSlice| -> FileLocation {
             let length = b.len();
             let l = FileLocation{file_id : file_id, offset : offset, length : length as u32};
-            buffers.push(b.clone());
+            buffers.push(b);
             offset += length as u64;
             l  
         };
@@ -312,13 +306,14 @@ impl BufferManager {
             let mut mtx = tx.borrow_mut();
 
             if mtx.txd_location.is_none() {
-                mtx.txd_location = Some(push_data_buffer(&mtx.state.serialized_transaction_description));
+                let s = ArcDataSlice::from(&mtx.state.serialized_transaction_description);
+                mtx.txd_location = Some(push_data_buffer(s));
             }
 
             if mtx.data_locations.is_none() && !mtx.state.object_updates.is_empty() {
                 let mut v = Vec::new();
                 for ou in &mtx.state.object_updates {
-                    v.push(push_data_buffer(&ou.1));
+                    v.push(push_data_buffer(ou.data.clone()));
                 }
                 mtx.data_locations = Some(v);
             }
@@ -332,7 +327,7 @@ impl BufferManager {
             let mut ma = a.borrow_mut();
 
             if ma.data_location.is_none() {
-                ma.data_location = Some(push_data_buffer(&ma.state.data));
+                ma.data_location = Some(push_data_buffer(ma.state.data.clone()));
             }
 
             drop(ma);
@@ -370,7 +365,7 @@ impl BufferManager {
         self.last_entry_location.encode_into(&mut tail);
         tail.put_slice(file_uuid.as_bytes());
 
-        buffers.push(tail.freeze());
+        buffers.push(ArcDataSlice::from(tail.finalize()));
 
         stream.write(buffers);
 
@@ -424,19 +419,6 @@ impl<T: Stream> Sweeper<T> {
     }
 }
 
-fn zfill<T: BufMut>(nbytes: u64, buf: &mut T) {
-    let mut remaining = nbytes;
-
-    while remaining > 8 {
-        buf.put_u64_le(0u64);
-        remaining -= 8;
-    }
-
-    while remaining > 0 {
-        buf.put_u8(0u8);
-        remaining -= 1;
-    }
-}
 
 // fn decode_tx_state<T: Buf>(buf: &mut T) -> Tx {
 //     let tx_id = TxId::decode_from(&mut buf);
@@ -454,7 +436,7 @@ fn zfill<T: BufMut>(nbytes: u64, buf: &mut T) {
 // }
 const STATIC_TX_SIZE: u64 = 17 + 16 + 14 + 4 + 1 + 11;
 
-fn encode_tx_state<T: BufMut>(tx: &Tx, buf: &mut T) {
+fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
     let tx_id = TxId(tx.state.store_id, tx.id);
     tx_id.encode_into(buf);
     
@@ -468,7 +450,7 @@ fn encode_tx_state<T: BufMut>(tx: &Tx, buf: &mut T) {
         Some(dl) => {
             buf.put_u8(dl.len() as u8);
             for (ou, loc) in tx.state.object_updates.iter().zip(dl.iter()) {
-                buf.put_slice(ou.0.as_bytes());
+                buf.put_slice(ou.object_id.0.as_bytes());
                 loc.encode_into(buf);
             }
         }
@@ -515,7 +497,7 @@ fn encode_tx_state<T: BufMut>(tx: &Tx, buf: &mut T) {
 // }
 const STATIC_ARS_SIZE: u64 = 17 + 16 + 4 + 16 + 1 + 4 + 14 + 8 + 8 + 4;
 
-fn encode_alloc_state<T: BufMut>(a: &Alloc, buf: &mut T) {
+fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
     let tx_id = TxId(a.state.store_id, a.state.allocation_transaction_id);
     tx_id.encode_into(buf);
 
@@ -549,7 +531,7 @@ fn encode_alloc_state<T: BufMut>(a: &Alloc, buf: &mut T) {
     buf.put_u32_le(a.state.refcount.count);
     buf.put_u64_le(a.state.timestamp.to_u64());
     buf.put_u32_le(a.state.serialized_revision_guard.len() as u32);
-    buf.put_slice(&a.state.serialized_revision_guard);
+    buf.put_slice(&a.state.serialized_revision_guard.as_bytes());
 }
 
 const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
@@ -587,7 +569,7 @@ fn calculate_write_size(
         }
         if tx.data_locations.is_none() && ! tx.state.object_updates.is_empty() {
             for ou in &tx.state.object_updates {
-                data += ou.1.len() as u64;
+                data += ou.data.len() as u64;
                 update_count += 1;
                 buffer_count += 1;
             }

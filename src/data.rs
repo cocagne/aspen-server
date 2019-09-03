@@ -12,13 +12,30 @@ pub struct Data {
     offset: usize
 }
 
+#[derive(Clone)]
 pub struct ArcData {
     pub buffer: Arc<Vec<u8>>,
+}
+
+pub struct ArcDataReader {
+    pub buffer: ArcData,
+    offset: usize
+}
+
+#[derive(Clone)]
+pub struct ArcDataSlice {
+    buffer: Arc<Vec<u8>>,
+    begin: usize,
+    end: usize
+}
+
+pub struct SliceReader<'a> {
+    slice: &'a ArcDataSlice,
     offset: usize
 }
 
 pub trait DataReader {
-    fn raw(&self) -> &Vec<u8>;
+    fn raw(&self) -> &[u8];
 
     fn offset(&self) -> usize;
 
@@ -32,11 +49,15 @@ pub trait DataReader {
         self.set_offset(self.offset() + inc);
     }
 
-    fn get_slice(&mut self, range: &ops::Range<usize>) -> &[u8] {
+    fn get_slice(&mut self, range: ops::Range<usize>) -> &[u8] {
         let o = self.offset();
         self.incr_offset(range.end - range.start);
         let s = &self.raw()[o+range.start .. o+range.end];
         s
+    }
+
+    fn copy_to_slice(&mut self, s: &mut [u8]) {
+        s.copy_from_slice(self.get_slice(0 .. s.len()));
     }
 
     fn get_u8(&mut self) -> u8 {
@@ -106,8 +127,65 @@ pub trait DataReader {
     }
 }
 
+impl Data {
+    pub fn new(buffer: Vec<u8>) -> Data {
+        Data { buffer, offset: 0}
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer[..]
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+impl ArcData {
+    pub fn new(buffer: Vec<u8>) -> ArcData {
+        ArcData {
+            buffer: Arc::new(buffer),
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer[..]
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+impl ArcDataSlice {
+    pub fn new(adata: &ArcData, offset: usize, end: usize) -> ArcDataSlice {
+        ArcDataSlice {
+            buffer: adata.buffer.clone(),
+            begin: offset,
+            end
+        }
+    }
+    
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer[self.begin .. self.end]
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.begin
+    }
+}
+
+impl<'a> SliceReader<'a> {
+    pub fn new(slice: &ArcDataSlice) -> SliceReader {
+        SliceReader {
+            slice,
+            offset: 0
+        }
+    }
+}
+
 impl DataMut {
-    pub fn new(capacity: usize) -> DataMut {
+    pub fn with_capacity(capacity: usize) -> DataMut {
         DataMut {
             v : Vec::with_capacity(capacity),
             offset : 0
@@ -128,7 +206,21 @@ impl DataMut {
         self.offset = new_offset;
     }
 
-    pub fn put(&mut self, s: &[u8]) {
+    pub fn zfill(&mut self, nbytes: u64) {
+        let mut remaining = nbytes;
+
+        while remaining > 8 {
+            self.put_u64_le(0u64);
+            remaining -= 8;
+        }
+
+        while remaining > 0 {
+            self.put_u8(0u8);
+            remaining -= 1;
+        }
+    }
+
+    pub fn put_slice(&mut self, s: &[u8]) {
         assert!(self.offset + s.len() <= self.capacity(), "Buffer overflow");
 
         if self.offset == self.len() {
@@ -161,7 +253,7 @@ impl DataMut {
         const SIZE: usize = 2;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_le_bytes());
+            self.put_slice(&x.to_le_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -181,7 +273,7 @@ impl DataMut {
         const SIZE: usize = 4;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_le_bytes());
+            self.put_slice(&x.to_le_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -201,7 +293,7 @@ impl DataMut {
         const SIZE: usize = 8;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_le_bytes());
+            self.put_slice(&x.to_le_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -223,7 +315,7 @@ impl DataMut {
         const SIZE: usize = 2;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_be_bytes());
+            self.put_slice(&x.to_be_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -243,7 +335,7 @@ impl DataMut {
         const SIZE: usize = 4;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_be_bytes());
+            self.put_slice(&x.to_be_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -263,7 +355,7 @@ impl DataMut {
         const SIZE: usize = 8;
 
         if self.offset == self.v.len() {
-            self.put(&x.to_be_bytes());
+            self.put_slice(&x.to_be_bytes());
         } else {
             while self.offset + SIZE > self.v.len() {
                 self.v.push(0u8);
@@ -278,7 +370,7 @@ impl DataMut {
 }
 
 impl DataReader for DataMut {
-    fn raw(&self) -> &Vec<u8> {
+    fn raw(&self) -> &[u8] {
         &self.v
     }
 
@@ -292,7 +384,7 @@ impl DataReader for DataMut {
 }
 
 impl DataReader for Data {
-    fn raw(&self) -> &Vec<u8> {
+    fn raw(&self) -> &[u8] {
         &self.buffer
     }
 
@@ -305,9 +397,9 @@ impl DataReader for Data {
     }
 }
 
-impl DataReader for ArcData {
-    fn raw(&self) -> &Vec<u8> {
-        &self.buffer
+impl DataReader for ArcDataReader {
+    fn raw(&self) -> &[u8] {
+        &self.buffer.buffer
     }
 
     fn offset(&self) -> usize {
@@ -319,20 +411,20 @@ impl DataReader for ArcData {
     }
 }
 
-impl Data {
-    pub fn new(buffer: Vec<u8>) -> Data {
-        Data { buffer, offset: 0}
+impl<'a> DataReader for SliceReader<'a> {
+    fn raw(&self) -> &[u8] {
+        &self.slice.as_bytes()
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
     }
 }
 
-impl ArcData {
-    pub fn new(buffer: Vec<u8>) -> ArcData {
-        ArcData {
-            buffer: Arc::new(buffer),
-            offset: 0
-        }
-    }
-}
 
 impl From<DataMut> for Data {
     fn from(data_mut: DataMut) -> Data {
@@ -362,7 +454,38 @@ impl From<Data> for ArcData {
     fn from(data: Data) -> ArcData {
         ArcData {
             buffer: Arc::new(data.buffer),
-            offset: data.offset
+        }
+    }
+}
+
+impl From<Data> for ArcDataSlice {
+    fn from (data: Data) -> ArcDataSlice {
+        let len = data.buffer.len();
+        ArcDataSlice {
+            buffer: Arc::new(data.buffer),
+            begin: 0,
+            end: len
+        }
+    }
+}
+
+impl From<ArcData> for ArcDataSlice {
+    fn from(adata: ArcData) -> ArcDataSlice {
+        let len = adata.buffer.len();
+        ArcDataSlice {
+            buffer: adata.buffer,
+            begin: 0,
+            end: len
+        }
+    }
+}
+
+impl From<&ArcData> for ArcDataSlice {
+    fn from(adata: &ArcData) -> ArcDataSlice {
+        ArcDataSlice {
+            buffer: adata.buffer.clone(),
+            begin: 0,
+            end: adata.buffer.len()
         }
     }
 }
@@ -431,17 +554,17 @@ mod tests {
 
     #[test]
     fn slices() {
-        let mut d = DataMut::new(6);
-        d.put(&0u32.to_le_bytes());
+        let mut d = DataMut::with_capacity(6);
+        d.put_slice(&0u32.to_le_bytes());
         assert_eq!(d.offset, 4);
         assert_eq!(d.v, [0, 0, 0, 0]);
         d.set_offset(0);
         assert_eq!(d.get_u32_le(), 0);
         d.set_offset(1);
-        d.put(&0x0A0Bu16.to_le_bytes());
+        d.put_slice(&0x0A0Bu16.to_le_bytes());
         assert_eq!(d.v, [0, 0xB, 0xA, 0]);
         d.set_offset(2);
-        d.put(&0x0D0C0B0Au32.to_le_bytes());
+        d.put_slice(&0x0D0C0B0Au32.to_le_bytes());
         assert_eq!(d.v, [0, 0xB, 0xA, 0xB, 0xC, 0xD]);
         d.set_offset(2);
         let x = d.get_u32_le();
@@ -450,8 +573,8 @@ mod tests {
 
     #[test]
     fn put_u8() {
-        let mut d = DataMut::new(4);
-        d.put(&0u16.to_le_bytes());
+        let mut d = DataMut::with_capacity(4);
+        d.put_slice(&0u16.to_le_bytes());
         assert_eq!(d.offset, 2);
         assert_eq!(d.v, [0, 0]);
         d.set_offset(1);
@@ -465,7 +588,7 @@ mod tests {
 
     #[test]
     fn put_u16_le() {
-        let mut d = DataMut::new(6);
+        let mut d = DataMut::with_capacity(6);
         assert_eq!(d.offset, 0);
         d.put_u16_le(0x0102u16); // exactly end
         assert_eq!(d.offset, 2);
@@ -487,7 +610,7 @@ mod tests {
 
     #[test]
     fn put_u32_le() {
-        let mut d = DataMut::new(4*3);
+        let mut d = DataMut::with_capacity(4*3);
         assert_eq!(d.offset, 0);
         d.put_u32_le(0x01020304u32); // exactly end
         assert_eq!(d.offset, 4);
@@ -512,7 +635,7 @@ mod tests {
 
     #[test]
     fn put_i32_le() {
-        let mut d = DataMut::new(4*3);
+        let mut d = DataMut::with_capacity(4*3);
         assert_eq!(d.offset, 0);
         d.put_i32_le(-40000i32);
         assert_eq!(d.offset, 4);
@@ -523,7 +646,7 @@ mod tests {
 
     #[test]
     fn put_i64_le() {
-        let mut d = DataMut::new(8*3);
+        let mut d = DataMut::with_capacity(8*3);
         assert_eq!(d.offset, 0);
         d.put_i64_le(-40000i64);
         assert_eq!(d.offset, 8);

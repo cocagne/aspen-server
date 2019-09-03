@@ -1,5 +1,4 @@
 use std::fmt;
-use bytes::Bytes;
 
 /// Object UUID
 /// 

@@ -1,6 +1,7 @@
 use std::fmt;
 
-use bytes::Bytes;
+use crate::object;
+use crate::ArcDataSlice;
 
 /// Transaction UUID
 /// 
@@ -69,4 +70,7 @@ impl fmt::Display for Disposition {
 }
 
 #[derive(Clone)]
-pub struct ObjectUpdate(pub uuid::Uuid, pub Bytes);
+pub struct ObjectUpdate {
+    pub object_id: object::Id,
+    pub data: ArcDataSlice
+}

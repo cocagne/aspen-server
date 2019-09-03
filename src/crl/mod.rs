@@ -8,8 +8,7 @@
 //! CRL implementations and the back end is abstracted away behind a std::async::mpsc::Sender
 //! interface.
 
-use bytes::Bytes;
-
+use super::{ ArcData, ArcDataSlice };
 use super::hlc;
 use super::object;
 use super::paxos;
@@ -45,7 +44,7 @@ pub trait InterfaceFactory {
 #[derive(Clone)]
 pub struct TransactionRecoveryState {
     store_id: store::Id,
-    serialized_transaction_description: Bytes,
+    serialized_transaction_description: ArcData,
     object_updates: Vec<transaction::ObjectUpdate>,
     tx_disposition: transaction::Disposition,
     paxos_state: paxos::PersistentState
@@ -59,11 +58,11 @@ pub struct AllocationRecoveryState {
     id: object::Id,
     kind: object::Kind,
     size: Option<u32>,
-    data: Bytes,
+    data: ArcDataSlice,
     refcount: object::Refcount,
     timestamp: hlc::Timestamp,
     allocation_transaction_id: transaction::Id,
-    serialized_revision_guard: Bytes
+    serialized_revision_guard: ArcDataSlice
 }
 
 /// Client interface to the Crash Recovery Log
@@ -115,7 +114,7 @@ impl Crl {
         &mut self,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: Option<Bytes>,
+        serialized_transaction_description: Option<ArcData>,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
@@ -171,11 +170,11 @@ impl Crl {
         id: object::Id,
         kind: object::Kind,
         size: Option<u32>,
-        data: Bytes,
+        data: ArcDataSlice,
         refcount: object::Refcount,
         timestamp: hlc::Timestamp,
         allocation_transaction_id: transaction::Id,
-        serialized_revision_guard: Bytes
+        serialized_revision_guard: ArcDataSlice
     ) -> RequestId {
         let request_id = self.next_request();
         self.sender.send(Request::SaveAllocationState{
@@ -217,7 +216,7 @@ enum Request {
         request_id: RequestId,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: Option<Bytes>,
+        serialized_transaction_description: Option<ArcData>,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
