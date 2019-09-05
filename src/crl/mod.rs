@@ -41,7 +41,7 @@ pub trait InterfaceFactory {
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct TransactionRecoveryState {
     store_id: store::Id,
     serialized_transaction_description: ArcData,
@@ -51,7 +51,7 @@ pub struct TransactionRecoveryState {
 }
 
 /// Represents the persistent state needed to recover an allocation operation after a crash
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct AllocationRecoveryState {
     store_id: store::Id,
     store_pointer: store::Pointer,

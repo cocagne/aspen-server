@@ -12,7 +12,7 @@ pub struct Data {
     offset: usize
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ArcData {
     pub buffer: Arc<Vec<u8>>,
 }
@@ -22,7 +22,7 @@ pub struct ArcDataReader {
     offset: usize
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ArcDataSlice {
     buffer: Arc<Vec<u8>>,
     begin: usize,
@@ -61,7 +61,14 @@ pub trait DataReader {
         self.set_offset(self.offset() + inc);
     }
 
-    fn get_slice(&mut self, range: ops::Range<usize>) -> &[u8] {
+    fn get_slice(&mut self, nbytes: usize) -> &[u8] {
+        let o = self.offset();
+        self.incr_offset(nbytes);
+        let s = &self.raw()[o .. o+nbytes];
+        s
+    }
+
+    fn slice_range(&mut self, range: ops::Range<usize>) -> &[u8] {
         let o = self.offset();
         self.incr_offset(range.end - range.start);
         let s = &self.raw()[o+range.start .. o+range.end];
@@ -69,7 +76,7 @@ pub trait DataReader {
     }
 
     fn copy_to_slice(&mut self, s: &mut [u8]) {
-        s.copy_from_slice(self.get_slice(0 .. s.len()));
+        s.copy_from_slice(self.get_slice(s.len()));
     }
 
     fn get_u8(&mut self) -> u8 {
@@ -136,6 +143,12 @@ pub trait DataReader {
     }
     fn get_i64_be(&mut self) -> i64 {
         self.get_u64_be() as i64
+    }
+
+    fn get_uuid(&mut self) -> uuid::Uuid {
+        let mut ubytes: [u8; 16] = [0; 16];
+        self.copy_to_slice(&mut ubytes);
+        uuid::Uuid::from_bytes(ubytes)
     }
 }
 
@@ -379,6 +392,10 @@ impl DataMut {
             self.offset += SIZE;
         }
     }
+
+    pub fn put_uuid(&mut self, uuid: uuid::Uuid) {
+        self.put_slice(uuid.as_bytes());
+    }
 }
 
 impl DataReader for DataMut {
@@ -466,6 +483,26 @@ impl From<Data> for ArcData {
     fn from(data: Data) -> ArcData {
         ArcData {
             buffer: Arc::new(data.buffer),
+        }
+    }
+}
+
+impl From<Vec<u8>> for ArcData {
+    fn from(data: Vec<u8>) -> ArcData {
+        ArcData {
+            buffer: Arc::new(data),
+        }
+    }
+}
+
+impl From<Vec<u8>> for ArcDataSlice {
+    fn from(v: Vec<u8>) -> ArcDataSlice {
+        let len = v.len();
+        
+        ArcDataSlice {
+            buffer: Arc::new(v),
+            begin: 0,
+            end: len
         }
     }
 }

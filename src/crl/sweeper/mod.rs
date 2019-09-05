@@ -31,6 +31,7 @@ use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
 
+#[derive(Debug)]
 struct DecodeError;
 
 impl From<crate::EncodingError> for DecodeError {
@@ -44,18 +45,15 @@ struct TxId(store::Id, transaction::Id);
 
 impl TxId {
     fn encode_into(&self, buf: &mut DataMut) {
-        buf.put_slice(self.0.pool_uuid.as_bytes());
+        buf.put_uuid(self.0.pool_uuid);
         buf.put_u8(self.0.pool_index);
-        buf.put_slice((self.1).0.as_bytes());
+        buf.put_uuid((self.1).0);
     }
 
     fn decode_from(buf: &mut Data) -> TxId {
-        let mut ubytes: [u8; 16] = [0; 16];
-        buf.copy_to_slice(&mut ubytes);
-        let pool_uuid = uuid::Uuid::from_bytes(ubytes);
+        let pool_uuid = buf.get_uuid();
         let pool_index = buf.get_u8();
-        buf.copy_to_slice(&mut ubytes);
-        let transaction_id = transaction::Id(uuid::Uuid::from_bytes(ubytes));
+        let transaction_id = transaction::Id(buf.get_uuid());
         TxId(store::Id {pool_uuid, pool_index }, transaction_id)
     }
 }
@@ -68,7 +66,7 @@ pub struct FileId(u16);
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct StreamId(usize);
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FileLocation {
     file_id: FileId,
     offset: u64,
@@ -82,6 +80,14 @@ impl FileLocation {
         buf.put_u32_le(self.length);
     }
 
+    fn null() -> FileLocation {
+        FileLocation {
+            file_id: FileId(0),
+            offset: 0,
+            length: 0
+        }
+    }
+    
     fn decode_from(buf: &mut Data) -> FileLocation {
         let file_id = buf.get_u16_le();
         let offset = buf.get_u64_le();
@@ -103,7 +109,7 @@ struct Tx {
     state: TransactionRecoveryState
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub struct RecoveringTx {
     id: TxId,
     serialized_transaction_description: FileLocation,
@@ -117,7 +123,7 @@ struct Alloc {
     state: AllocationRecoveryState
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub struct RecoveringAlloc {
     id: TxId,
     store_pointer: store::Pointer,
@@ -127,7 +133,6 @@ pub struct RecoveringAlloc {
     data: FileLocation,
     refcount: object::Refcount,
     timestamp: hlc::Timestamp,
-    allocation_transaction_id: transaction::Id,
     serialized_revision_guard: ArcDataSlice
 }
 
@@ -530,6 +535,8 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
     
     if let Some(loc) = &tx.txd_location {
         loc.encode_into(buf);
+    } else {
+        FileLocation::null().encode_into(buf);
     }
 
     buf.put_u8(tx.state.tx_disposition.to_u8());
@@ -578,16 +585,127 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
 //     id: object::Id, 16
 //     kind: object::Kind, 1
 //     size: Option<u32>, 4 - 0 means None
-//     data: Bytes, 14 = 2 + 8 + 4
+//     data: Bytes, 14 = FileLocation
 //     refcount: object::Refcount, 8
 //     timestamp: hlc::Timestamp, 8
 //     serialized_revision_guard: Bytes <== 4 + nbytes
 // }
 const STATIC_ARS_SIZE: u64 = 17 + 16 + 4 + 16 + 1 + 4 + 14 + 8 + 8 + 4;
 
+fn decode_alloc_state(buf: &mut Data) -> Result<RecoveringAlloc, DecodeError> {
+    if buf.remaining() < STATIC_ARS_SIZE as usize {
+        Err(DecodeError{})
+    } else {
+        let id = TxId::decode_from(buf);
+
+        //let txd_loc = FileLocation::decode_from(buf);
+
+        let object_id = object::Id(buf.get_uuid());
+        let kind = object::Kind::from_u8(buf.get_u8())?;
+
+        let size = {
+            let sz = buf.get_u32_le();
+
+            if sz == 0 {
+                None
+            } else {
+                Some(sz)
+            }
+        };
+
+        let data = FileLocation::decode_from(buf);
+
+        let refcount = {
+            let update_serial = buf.get_u32_le();
+            let count = buf.get_u32_le();
+            object::Refcount {
+                update_serial,
+                count
+            }
+        };
+
+        let timestamp = hlc::Timestamp::from(buf.get_u64_le());
+
+        let serialized_revision_guard = {
+            let nbytes = buf.get_u32_le() as usize;
+            if buf.remaining() < nbytes {
+                return Err(DecodeError{});
+            }
+            let mut v: Vec<u8> = Vec::with_capacity(nbytes);
+            v.extend_from_slice(buf.get_slice(nbytes));
+            ArcDataSlice::from(v)
+        };
+
+        let store_pointer = {
+            if buf.remaining() < 4 {
+                return Err(DecodeError{});
+            }
+
+            let nbytes = buf.get_u32_le() as usize;
+
+            if buf.remaining() < nbytes {
+                return Err(DecodeError{});
+            }
+
+            if nbytes == 0 {
+                store::Pointer::None
+            } 
+            else if nbytes <= 23 {
+                let mut content: [u8; 23] = [0; 23];
+
+                let s = buf.get_slice(nbytes);
+
+                for (idx, byte) in s.iter().enumerate() {
+                    content[idx] = *byte;
+                }
+                
+                store::Pointer::Short {
+                    nbytes: nbytes as u8,
+                    content
+                }
+            } 
+            else {
+                let mut content: Vec<u8> = Vec::with_capacity(nbytes);
+                content.extend_from_slice(buf.get_slice(nbytes));
+                store::Pointer::Long {
+                    content
+                }
+            }
+        };
+
+        Ok(RecoveringAlloc{
+            id,
+            store_pointer,
+            object_id,
+            kind,
+            size,
+            data,
+            refcount,
+            timestamp,
+            serialized_revision_guard
+        })
+    }
+}
 fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
+    assert!(a.data_location.is_some(), "DataLocation field must be set!");
+
     let tx_id = TxId(a.state.store_id, a.state.allocation_transaction_id);
     tx_id.encode_into(buf);
+
+    buf.put_uuid(a.state.id.0);
+    buf.put_u8(a.state.kind.to_u8());
+    buf.put_u32_le(match a.state.size {
+        None => 0u32,
+        Some(len) => len
+    });
+    
+    a.data_location.unwrap().encode_into(buf);
+
+    buf.put_u32_le(a.state.refcount.update_serial);
+    buf.put_u32_le(a.state.refcount.count);
+    buf.put_u64_le(a.state.timestamp.to_u64());
+    buf.put_u32_le(a.state.serialized_revision_guard.len() as u32);
+    buf.put_slice(&a.state.serialized_revision_guard.as_bytes());
 
     match &a.state.store_pointer {
         store::Pointer::None => buf.put_u32_le(0),
@@ -600,26 +718,6 @@ fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
             buf.put_slice(content);
         }
     };
-
-    buf.put_slice(a.state.id.0.as_bytes());
-    buf.put_u8(a.state.kind.to_u8());
-    buf.put_u32_le(match a.state.size {
-        None => 0u32,
-        Some(len) => len
-    });
-    match &a.data_location {
-        None => {
-            buf.put_u16_le(0);
-            buf.put_u64_le(0);
-            buf.put_u32_le(0);
-        }
-        Some(loc) => loc.encode_into(buf)
-    }
-    buf.put_u32_le(a.state.refcount.update_serial);
-    buf.put_u32_le(a.state.refcount.count);
-    buf.put_u64_le(a.state.timestamp.to_u64());
-    buf.put_u32_le(a.state.serialized_revision_guard.len() as u32);
-    buf.put_slice(&a.state.serialized_revision_guard.as_bytes());
 }
 
 const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
@@ -704,16 +802,188 @@ fn pad_to_4k_alignment(offset: u64, data_size: u64, tail_size: u64) -> u64 {
 mod tests {
     
     use super::*;
+    use crate::data::*;
+    use crate::store;
+    use crate::transaction;
+    use crate::paxos;
 
-    
+    fn uuids() -> [uuid::Uuid; 4] {
+        [uuid::Uuid::parse_str("d1cccd1b-e34e-4193-ad62-868a964eab9c").unwrap(),
+        uuid::Uuid::parse_str("f308d237-a26e-4735-b001-6782fb2eac38").unwrap(),
+        uuid::Uuid::parse_str("0e18b5ad-0717-4a5b-b0d1-e675dd55790a").unwrap(),
+        uuid::Uuid::parse_str("7c27c2af-4d7a-4eab-867d-00691d6dfed8").unwrap()]
+    }
 
     #[test]
-    fn compare() {
+    fn padding() {
         assert_eq!(pad_to_4k_alignment(0, 0, 16), 4096-16);
         assert_eq!(pad_to_4k_alignment(0, 0, 17), 4096-17);
         assert_eq!(pad_to_4k_alignment(4096, 0, 16), 4096-16);
         assert_eq!(pad_to_4k_alignment(4096, 2048, 2048), 0);
         assert_eq!(pad_to_4k_alignment(4096, 4096, 4096), 0);
         assert_eq!(pad_to_4k_alignment(0, 4096, 4096), 0);
+    }
+
+    #[test]
+    fn tx_minimal_encoding() {
+        let ids = uuids();
+        let txid = transaction::Id(ids[0]);
+        let pool_uuid = ids[1];
+        let store_id = store::Id { pool_uuid, pool_index: 1u8 };
+        let std = ArcData::from(vec![1u8,2u8,3u8]);
+        let tx_disposition = transaction::Disposition::VoteCommit;
+        let paxos_state = paxos::PersistentState { promised: None, accepted: None };
+        let tx1 = Tx {
+            id: txid,
+            txd_location: None,
+            data_locations: None,
+            state: TransactionRecoveryState {
+                store_id,
+                serialized_transaction_description: std,
+                object_updates: Vec::new(),
+                tx_disposition,
+                paxos_state
+            }
+        };
+        
+        let mut m = DataMut::with_capacity(4096);
+
+        encode_tx_state(&tx1, &mut m);
+
+        m.set_offset(0);
+
+        let mut r = Data::from(m);
+
+        let ra = decode_tx_state(&mut r).unwrap();
+
+        let expected = RecoveringTx {
+            id: TxId(store_id, txid),
+            serialized_transaction_description: FileLocation::null(),
+            object_updates: Vec::new(),
+            tx_disposition,
+            paxos_state
+        };
+
+        assert_eq!(ra, expected);
+    }
+
+    #[test]
+    fn tx_full_encoding() {
+        let ids = uuids();
+        let txid = transaction::Id(ids[0]);
+        let txd_loc = FileLocation { file_id: FileId(5), offset: 2,length: 3 };
+        let u1 = FileLocation { file_id: FileId(1), offset: 1, length: 1 };
+        let u2 = FileLocation { file_id: FileId(2), offset: 2, length: 2 };
+
+        let oid1 = object::Id(ids[2]);
+        let oid2 = object::Id(ids[3]);
+        let ads = ArcDataSlice::from(vec![0u8]);
+
+        let ou1 = transaction::ObjectUpdate { object_id: oid1, data: ads.clone() };
+        let ou2 = transaction::ObjectUpdate { object_id: oid2, data: ads.clone() };
+
+        let pool_uuid = ids[1];
+        let store_id = store::Id { pool_uuid, pool_index: 1u8 };
+        let std = ArcData::from(vec![1u8,2u8,3u8]);
+        let tx_disposition = transaction::Disposition::VoteCommit;
+        let pid1 = paxos::ProposalId { number: 1, peer: 2 };
+        let pid2 = paxos::ProposalId { number: 3, peer: 3 };
+        let paxos_state = paxos::PersistentState { promised: Some(pid1), accepted: Some((pid2, true)) };
+
+        let tx1 = Tx {
+            id: txid,
+            txd_location: Some(txd_loc),
+            data_locations: Some(vec![u1, u2]),
+            state: TransactionRecoveryState {
+                store_id,
+                serialized_transaction_description: std,
+                object_updates: vec![ou1, ou2],
+                tx_disposition,
+                paxos_state
+            }
+        };
+        
+        let mut m = DataMut::with_capacity(4096);
+
+        encode_tx_state(&tx1, &mut m);
+
+        m.set_offset(0);
+
+        let mut r = Data::from(m);
+
+        let ra = decode_tx_state(&mut r).unwrap();
+
+        let expected = RecoveringTx {
+            id: TxId(store_id, txid),
+            serialized_transaction_description: txd_loc,
+            object_updates: vec![(ids[2], u1), (ids[3], u2)],
+            tx_disposition,
+            paxos_state
+        };
+
+        assert_eq!(ra, expected);
+    }
+
+    #[test]
+    fn alloc_encoding() {
+        let data_location = FileLocation { file_id: FileId(1), offset: 2,length: 3 };
+        let ids = uuids();
+        let txid = transaction::Id(ids[0]);
+        let mut sp_content: [u8; 23] = [0u8; 23];
+        sp_content[0] = 2;
+        sp_content[1] = 2;
+        sp_content[2] = 2;
+        let sp_content = sp_content;
+        let store_pointer = store::Pointer::Short{nbytes: 3, content: sp_content};
+        let object_id = object::Id(ids[1]);
+        let kind = object::Kind::KeyValue;
+        let size = Some(10);
+        let data = ArcDataSlice::from(vec![0u8]);
+        let rc = object::Refcount { update_serial: 5, count: 2 };
+        let timestamp = hlc::Timestamp::from(10u64);
+        let allocation_transaction_id = txid;
+        let srg = ArcDataSlice::from(vec![0u8, 1u8, 2u8]);
+        let pool_uuid = ids[2];
+        let store_id = store::Id { pool_uuid, pool_index: 1u8 };
+        
+        let alloc = Alloc {
+            data_location: Some(data_location),
+            state: AllocationRecoveryState {
+                store_id,
+                store_pointer: store_pointer.clone(),
+                id: object_id,
+                kind,
+                size,
+                data: data.clone(),
+                refcount: rc,
+                timestamp,
+                allocation_transaction_id,
+                serialized_revision_guard: srg.clone()
+            }
+        };
+        
+        let mut m = DataMut::with_capacity(4096);
+
+        encode_alloc_state(&alloc, &mut m);
+
+        m.set_offset(0);
+
+        let mut r = Data::from(m);
+
+        let ra = decode_alloc_state(&mut r).unwrap();
+
+        let expected = RecoveringAlloc {
+            id: TxId(store_id, txid),
+            store_pointer,
+            object_id,
+            kind,
+            size,
+            data: data_location,
+            refcount: rc,
+            timestamp,
+            serialized_revision_guard: srg.clone()
+        };
+
+        assert_eq!(ra, expected);
     }
 }
