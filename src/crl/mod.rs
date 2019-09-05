@@ -120,16 +120,32 @@ impl Crl {
         paxos_state: paxos::PersistentState
     ) -> RequestId {
         let request_id = self.next_request();
-        self.sender.send(Request::SaveTransactionState{
-            client_id: self.client_id,
-            request_id: request_id,
-            store_id: store_id,
-            transaction_id: transaction_id,
-            serialized_transaction_description: serialized_transaction_description,
-            object_updates: object_updates,
-            tx_disposition: tx_disposition,
-            paxos_state: paxos_state
-        }).unwrap_or(()); // Explicitly ignore any errors
+        match serialized_transaction_description {
+            None => {
+                self.sender.send(Request::UpdateTransactionState{
+                    client_id: self.client_id,
+                    request_id,
+                    store_id,
+                    transaction_id,
+                    object_updates,
+                    tx_disposition,
+                    paxos_state
+                }).unwrap_or(()); // Explicitly ignore any errors
+            }
+            Some(data) => {
+                self.sender.send(Request::AddTransactionState{
+                    client_id: self.client_id,
+                    request_id,
+                    store_id,
+                    transaction_id,
+                    serialized_transaction_description: data,
+                    object_updates: object_updates.unwrap_or(Vec::new()),
+                    tx_disposition: tx_disposition,
+                    paxos_state: paxos_state
+                }).unwrap_or(()); // Explicitly ignore any errors
+            }
+        }
+        
         request_id
     }
 
@@ -211,12 +227,21 @@ impl Crl {
 struct ClientId(u32);
 
 enum Request {
-    SaveTransactionState {
+    AddTransactionState {
         client_id: ClientId,
         request_id: RequestId,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: Option<ArcData>,
+        serialized_transaction_description: ArcData,
+        object_updates: Vec<transaction::ObjectUpdate>,
+        tx_disposition: transaction::Disposition,
+        paxos_state: paxos::PersistentState
+    },
+    UpdateTransactionState {
+        client_id: ClientId,
+        request_id: RequestId,
+        store_id: store::Id,
+        transaction_id: transaction::Id,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState

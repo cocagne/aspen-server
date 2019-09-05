@@ -23,7 +23,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use crate::{ArcDataSlice, Data, DataMut, DataReader};
+use crate::{ArcData, ArcDataSlice, Data, DataMut, DataReader};
 use crate::hlc;
 use crate::object;
 use crate::paxos;
@@ -106,7 +106,8 @@ struct Tx {
     id: transaction::Id,
     txd_location: Option<FileLocation>,
     data_locations: Option<Vec<FileLocation>>,
-    state: TransactionRecoveryState
+    state: TransactionRecoveryState,
+    last_entry_serial: u64
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -115,12 +116,25 @@ pub struct RecoveringTx {
     serialized_transaction_description: FileLocation,
     object_updates: Vec<(uuid::Uuid, FileLocation)>,
     tx_disposition: transaction::Disposition,
-    paxos_state: paxos::PersistentState
+    paxos_state: paxos::PersistentState,
+    last_entry_serial: u64
+}
+
+pub struct RecoveredTx {
+    id: TxId,
+    txd_location: FileLocation,
+    serialized_transaction_description: ArcData,
+    object_updates: Vec<transaction::ObjectUpdate>,
+    update_locations: Vec<(uuid::Uuid, FileLocation)>,
+    tx_disposition: transaction::Disposition,
+    paxos_state: paxos::PersistentState,
+    last_entry_serial: u64
 }
 
 struct Alloc {
     data_location: Option<FileLocation>,
-    state: AllocationRecoveryState
+    state: AllocationRecoveryState,
+    last_entry_serial: u64
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -133,7 +147,22 @@ pub struct RecoveringAlloc {
     data: FileLocation,
     refcount: object::Refcount,
     timestamp: hlc::Timestamp,
-    serialized_revision_guard: ArcDataSlice
+    serialized_revision_guard: ArcDataSlice,
+    last_entry_serial: u64
+}
+
+pub struct RecoveredAlloc {
+    id: TxId,
+    store_pointer: store::Pointer,
+    object_id: object::Id,
+    kind: object::Kind,
+    size: Option<u32>,
+    data_location: FileLocation,
+    data: ArcData,
+    refcount: object::Refcount,
+    timestamp: hlc::Timestamp,
+    serialized_revision_guard: ArcDataSlice,
+    last_entry_serial: u64
 }
 
 struct EntryBuffer {
@@ -176,6 +205,14 @@ impl EntryBuffer {
     fn add_allocation(&mut self, tx_id: TxId) {
         self.alloc.push(tx_id);
     }
+
+    fn drop_transaction(&mut self, tx_id: TxId) {
+        self.tx_deletions.push(tx_id);
+    }
+
+    fn drop_allocation(&mut self, tx_id: TxId) {
+        self.alloc_deletions.push(tx_id);
+    }
 }
 
 pub trait Stream {
@@ -205,13 +242,20 @@ pub struct BufferManager {
     allocations: HashMap<TxId, RefCell<Alloc>>,
     processing_buffer: RefCell<EntryBuffer>,
     current_buffer: RefCell<EntryBuffer>,
-    entry_serial: u64,
-    last_entry_location: FileLocation
+    entry_window_size: usize,
+    next_entry_serial: u64,
+    last_entry_location: FileLocation,
+    earliest_entry_needed: u64
 }
 
 impl BufferManager {
 
-    pub fn new<T: Stream>(streams: &Vec<T>) -> BufferManager {
+    pub fn new<T: Stream>(
+        streams: &Vec<T>, 
+        entry_window_size: usize,
+        recovered_transactions: &Vec<RecoveredTx>,
+        recovered_allocations: &Vec<RecoveredAlloc>) -> BufferManager {
+
         let mut last_serial = 0;
         let mut last_location = FileLocation {
             file_id: FileId(0u16),
@@ -227,19 +271,168 @@ impl BufferManager {
                 }
             }
         }
+
+        let mut transactions = HashMap::new();
+        let mut allocations = HashMap::new();
+
+        for rtx in recovered_transactions {
+            transactions.insert(rtx.id.clone(), RefCell::new(Tx {
+                id: rtx.id.1.clone(),
+                txd_location: Some(rtx.txd_location),
+                data_locations: Some(rtx.update_locations.iter().map(|ou| ou.1).collect()),
+                state: TransactionRecoveryState {
+                    store_id: rtx.id.0,
+                    serialized_transaction_description: rtx.serialized_transaction_description.clone(),
+                    object_updates: rtx.object_updates.clone(),
+                    tx_disposition: rtx.tx_disposition,
+                    paxos_state: rtx.paxos_state
+                },
+                last_entry_serial: rtx.last_entry_serial
+            }));
+        }
+
+        for ra in recovered_allocations {
+            allocations.insert(ra.id.clone(), RefCell::new(Alloc {
+                data_location: Some(ra.data_location),
+                state: AllocationRecoveryState {
+                    store_id: ra.id.0,
+                    store_pointer: ra.store_pointer.clone(),
+                    id: ra.object_id,
+                    kind: ra.kind,
+                    size: ra.size,
+                    data: ArcDataSlice::from(ra.data.clone()),
+                    refcount: ra.refcount,
+                    timestamp: ra.timestamp,
+                    allocation_transaction_id: ra.id.1,
+                    serialized_revision_guard: ra.serialized_revision_guard.clone()
+                },
+                last_entry_serial: ra.last_entry_serial
+            }));
+        }
+
+        let earliest_entry_needed = transactions.iter().map(|(_,v)| v.borrow().last_entry_serial).chain(
+            allocations.iter().map(|(_,v)| v.borrow().last_entry_serial)
+        ).fold(last_serial+1, |a, s| {
+            if s < a {
+                s
+            } else {
+                a
+            }
+        });
        
         BufferManager {
-            transactions: HashMap::new(),
-            allocations: HashMap::new(),
+            transactions: transactions,
+            allocations: allocations,
             processing_buffer: RefCell::new(EntryBuffer::new()),
             current_buffer: RefCell::new(EntryBuffer::new()),
-            entry_serial: last_serial,
-            last_entry_location: last_location
+            entry_window_size,
+            next_entry_serial: last_serial+1,
+            last_entry_location: last_location,
+            earliest_entry_needed
         }
     }
 
     fn is_empty(&self) -> bool {
         self.current_buffer.borrow().is_empty()
+    }
+
+    pub fn add_transaction(&mut self,
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+        serialized_transaction_description: ArcData,
+        object_updates: Vec<transaction::ObjectUpdate>,
+        tx_disposition: transaction::Disposition,
+        paxos_state: paxos::PersistentState,
+        last_entry_serial: Option<u64>) {
+        
+        let txid = TxId(store_id, transaction_id);
+
+        self.transactions.insert(txid.clone(), RefCell::new(Tx {
+            id: transaction_id,
+            txd_location: None,
+            data_locations: None,
+            state: TransactionRecoveryState {
+                store_id,
+                serialized_transaction_description,
+                object_updates,
+                tx_disposition,
+                paxos_state
+            },
+            last_entry_serial: last_entry_serial.unwrap_or(self.next_entry_serial)
+        }));
+
+        self.current_buffer.borrow_mut().add_transaction(txid);
+    }
+
+    pub fn update_transaction(&mut self,
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+        tx_disposition: transaction::Disposition,
+        paxos_state: paxos::PersistentState,
+        object_updates: Option<Vec<transaction::ObjectUpdate>>){
+        
+        let txid = TxId(store_id, transaction_id);
+
+        if let Some(tx) = self.transactions.get(&txid) {
+            let mut mtx = tx.borrow_mut();
+
+            mtx.state.tx_disposition = tx_disposition;
+            mtx.state.paxos_state = paxos_state;
+
+            if let Some(updates) = object_updates {
+                mtx.state.object_updates = updates;
+                mtx.data_locations = None;
+            }
+
+            self.current_buffer.borrow_mut().add_transaction(txid);
+        };
+    }
+
+    pub fn drop_transaction(&mut self, store_id: store::Id, transaction_id: transaction::Id) {
+        let tx_id = TxId(store_id, transaction_id);
+        self.current_buffer.borrow_mut().drop_transaction(tx_id);
+        self.transactions.remove(&tx_id);
+    }
+
+    pub fn drop_allocation(&mut self, store_id: store::Id, transaction_id: transaction::Id) {
+        let tx_id = TxId(store_id, transaction_id);
+        self.current_buffer.borrow_mut().drop_allocation(tx_id);
+        self.allocations.remove(&tx_id);
+    }
+
+    pub fn add_allocation(&mut self,
+        store_id: store::Id,
+        store_pointer: store::Pointer,
+        id: object::Id,
+        kind: object::Kind,
+        size: Option<u32>,
+        data: ArcDataSlice,
+        refcount: object::Refcount,
+        timestamp: hlc::Timestamp,
+        allocation_transaction_id: transaction::Id,
+        serialized_revision_guard: ArcDataSlice,
+        last_entry_serial: Option<u64>) {
+
+        let txid = TxId(store_id, allocation_transaction_id);
+
+        self.allocations.insert(txid.clone(), RefCell::new(Alloc {
+            data_location: None,
+            state: AllocationRecoveryState {
+                store_id,
+                store_pointer,
+                id,
+                kind,
+                size,
+                data,
+                refcount,
+                timestamp,
+                allocation_transaction_id,
+                serialized_revision_guard
+            },
+            last_entry_serial: last_entry_serial.unwrap_or(self.next_entry_serial)
+        }));
+
+        self.current_buffer.borrow_mut().add_allocation(txid);
     }
 
     fn prune_data_stored_in_file(&self, file_id: FileId) {
@@ -284,7 +477,28 @@ impl BufferManager {
         
         let buf = &self.processing_buffer.borrow();
 
-        self.entry_serial += 1;
+        let entry_serial = self.next_entry_serial;
+
+        self.next_entry_serial += 1;
+
+        // If this entry falls on a window-size boundary, put all transactions and allocations
+        // written behind the window-size into the entry buffer
+        if entry_serial % self.entry_window_size as u64 == 0 {
+            let earliest = entry_serial - self.entry_window_size as u64;
+
+            for (txid, tx) in &self.transactions {
+                if tx.borrow().last_entry_serial < earliest {
+                    self.current_buffer.borrow_mut().add_transaction(*txid);
+                }
+            }
+            for (txid, a) in &self.allocations {
+                if a.borrow().last_entry_serial < earliest {
+                    self.current_buffer.borrow_mut().add_allocation(*txid);
+                }
+            }
+
+            self.earliest_entry_needed = earliest;
+        }
 
         let mut prune_file_from_log: Option<FileId> = None;
 
@@ -334,11 +548,13 @@ impl BufferManager {
             let l = FileLocation{file_id : file_id, offset : offset, length : length as u32};
             buffers.push(b);
             offset += length as u64;
-            l  
+            l
         };
 
         for tx in txs.iter() {
             let mut mtx = tx.borrow_mut();
+
+            mtx.last_entry_serial = entry_serial;
 
             if mtx.txd_location.is_none() {
                 let s = ArcDataSlice::from(&mtx.state.serialized_transaction_description);
@@ -355,11 +571,13 @@ impl BufferManager {
 
             drop(mtx);
 
-            encode_tx_state(&tx.borrow(), &mut tail);   
+            encode_tx_state(&tx.borrow(), &mut tail);
         }
 
         for a in allocs.iter() {
             let mut ma = a.borrow_mut();
+
+            ma.last_entry_serial = entry_serial;
 
             if ma.data_location.is_none() {
                 ma.data_location = Some(push_data_buffer(ma.state.data.clone()));
@@ -385,14 +603,16 @@ impl BufferManager {
         // Entry block always ends with:
         //   entry_serial_number - 8
         //   entry_begin_offset - 8
+        //   earliest_needed_entry_serial_number - 8
         //   num_transactions - 4
         //   num_allocations - 4
         //   num_tx_deletions - 4
         //   num_alloc_deletions - 4
         //   prev_entry_file_location - 14 (2 + 8 + 4)
         //   file_uuid - 16
-        tail.put_u64_le(self.entry_serial);
+        tail.put_u64_le(entry_serial);
         tail.put_u64_le(entry_offset);
+        tail.put_u64_le(self.earliest_entry_needed);
         tail.put_u32_le(txs.len() as u32);
         tail.put_u32_le(allocs.len() as u32);
         tail.put_u32_le(buf.tx_deletions.len() as u32);
@@ -427,8 +647,14 @@ pub struct Sweeper<T: Stream> {
 
 impl<T: Stream> Sweeper<T> {
 
-    pub fn new(streams: Vec<T>) -> Sweeper<T> {
-        let buf_mgr = BufferManager::new(&streams);
+    pub fn new(
+        streams: Vec<T>,
+        entry_window_size: usize,
+        recovered_transactions: &Vec<RecoveredTx>,
+        recovered_allocations: &Vec<RecoveredAlloc>) -> Sweeper<T> {
+
+        let buf_mgr = BufferManager::new(&streams, entry_window_size, 
+            recovered_transactions, recovered_allocations);
 
         Sweeper {
             streams: streams,
@@ -463,7 +689,7 @@ impl<T: Stream> Sweeper<T> {
 //     paxos_state: paxos::PersistentState, 11 (1:mask-byte + 5:proposalId + 5:proposalId)
 //     object_updates: Vec<transaction::ObjectUpdate>, 4:count + num_updates * (16:objuuid + FileLocation)
 // }
-fn decode_tx_state(buf: &mut Data) -> Result<RecoveringTx, DecodeError> {
+fn decode_tx_state(buf: &mut Data, entry_serial: u64) -> Result<RecoveringTx, DecodeError> {
     if buf.remaining() < STATIC_TX_SIZE as usize {
         Err(DecodeError{})
     } else {
@@ -522,7 +748,8 @@ fn decode_tx_state(buf: &mut Data) -> Result<RecoveringTx, DecodeError> {
             serialized_transaction_description: txd_loc,
             object_updates: updates,
             tx_disposition: disposition,
-            paxos_state: pax
+            paxos_state: pax,
+            last_entry_serial: entry_serial
         })
     }
 }
@@ -592,7 +819,7 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
 // }
 const STATIC_ARS_SIZE: u64 = 17 + 16 + 4 + 16 + 1 + 4 + 14 + 8 + 8 + 4;
 
-fn decode_alloc_state(buf: &mut Data) -> Result<RecoveringAlloc, DecodeError> {
+fn decode_alloc_state(buf: &mut Data, entry_serial: u64) -> Result<RecoveringAlloc, DecodeError> {
     if buf.remaining() < STATIC_ARS_SIZE as usize {
         Err(DecodeError{})
     } else {
@@ -682,10 +909,12 @@ fn decode_alloc_state(buf: &mut Data) -> Result<RecoveringAlloc, DecodeError> {
             data,
             refcount,
             timestamp,
-            serialized_revision_guard
+            serialized_revision_guard,
+            last_entry_serial: entry_serial
         })
     }
 }
+
 fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
     assert!(a.data_location.is_some(), "DataLocation field must be set!");
 
@@ -720,19 +949,19 @@ fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
     };
 }
 
-const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
-
-/// Calculates the size required for the write.
-/// 
 /// Entry block always ends with:
 ///   entry_serial_number - 8
 ///   entry_begin_offset - 8
+///   earliest_entry_needed - 8
 ///   num_transactions - 4
 ///   num_allocations - 4
 ///   num_tx_deletions - 4
 ///   num_alloc_deletions - 4
 ///   prev_entry_file_location - 14 (2 + 8 + 4)
 ///   file_uuid - 16
+const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
+
+/// Calculates the size required for the write.
 /// 
 /// Returns (size-of-pre-entry-data, 4k-alignment-padding-bytes, size-of-entry-block, number-of-data-buffers)
 fn calculate_write_size(
@@ -843,7 +1072,8 @@ mod tests {
                 object_updates: Vec::new(),
                 tx_disposition,
                 paxos_state
-            }
+            },
+            last_entry_serial: 0
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -854,14 +1084,15 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_tx_state(&mut r).unwrap();
+        let ra = decode_tx_state(&mut r, 0).unwrap();
 
         let expected = RecoveringTx {
             id: TxId(store_id, txid),
             serialized_transaction_description: FileLocation::null(),
             object_updates: Vec::new(),
             tx_disposition,
-            paxos_state
+            paxos_state,
+            last_entry_serial: 0
         };
 
         assert_eq!(ra, expected);
@@ -900,7 +1131,8 @@ mod tests {
                 object_updates: vec![ou1, ou2],
                 tx_disposition,
                 paxos_state
-            }
+            },
+            last_entry_serial: 0
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -911,14 +1143,15 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_tx_state(&mut r).unwrap();
+        let ra = decode_tx_state(&mut r, 0).unwrap();
 
         let expected = RecoveringTx {
             id: TxId(store_id, txid),
             serialized_transaction_description: txd_loc,
             object_updates: vec![(ids[2], u1), (ids[3], u2)],
             tx_disposition,
-            paxos_state
+            paxos_state,
+            last_entry_serial: 0
         };
 
         assert_eq!(ra, expected);
@@ -959,7 +1192,8 @@ mod tests {
                 timestamp,
                 allocation_transaction_id,
                 serialized_revision_guard: srg.clone()
-            }
+            },
+            last_entry_serial: 0
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -970,7 +1204,7 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_alloc_state(&mut r).unwrap();
+        let ra = decode_alloc_state(&mut r, 0).unwrap();
 
         let expected = RecoveringAlloc {
             id: TxId(store_id, txid),
@@ -981,7 +1215,8 @@ mod tests {
             data: data_location,
             refcount: rc,
             timestamp,
-            serialized_revision_guard: srg.clone()
+            serialized_revision_guard: srg.clone(),
+            last_entry_serial: 0
         };
 
         assert_eq!(ra, expected);
