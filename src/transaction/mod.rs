@@ -34,7 +34,7 @@ impl fmt::Display for Status {
 }
 
 /// Disposition of the store with respect to whether or not the transaction should be committed
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Disposition {
     Undetermined,
     VoteCommit,

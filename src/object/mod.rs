@@ -43,7 +43,7 @@ impl fmt::Display for Refcount {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Kind {
     Data,
     KeyValue

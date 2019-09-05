@@ -27,7 +27,7 @@ impl fmt::Display for Id {
 /// This wraps a Bytes instance to take advantage of both the API the bytes crate provides as well
 /// as the support for inline embedding of small data within the bytes instance rather than always
 /// allocating on the heap as a Vec<u8> would.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Pointer {
     None,
     Short {

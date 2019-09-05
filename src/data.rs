@@ -29,6 +29,14 @@ pub struct ArcDataSlice {
     end: usize
 }
 
+impl PartialEq for ArcDataSlice {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for ArcDataSlice {}
+
 pub struct SliceReader<'a> {
     slice: &'a ArcDataSlice,
     offset: usize
@@ -43,6 +51,10 @@ pub trait DataReader {
 
     fn len(&self) -> usize {
         self.raw().len()
+    }
+
+    fn remaining(&self) -> usize {
+        self.len() - self.offset()
     }
 
     fn incr_offset(&mut self, inc: usize) {

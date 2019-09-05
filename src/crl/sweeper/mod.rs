@@ -24,9 +24,20 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::{ArcDataSlice, Data, DataMut, DataReader};
+use crate::hlc;
+use crate::object;
+use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
+
+struct DecodeError;
+
+impl From<crate::EncodingError> for DecodeError {
+    fn from(_: crate::EncodingError) -> DecodeError {
+        DecodeError{}
+    }
+}
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 struct TxId(store::Id, transaction::Id);
@@ -57,6 +68,7 @@ pub struct FileId(u16);
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct StreamId(usize);
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct FileLocation {
     file_id: FileId,
     offset: u64,
@@ -91,15 +103,33 @@ struct Tx {
     state: TransactionRecoveryState
 }
 
+#[derive(Eq, PartialEq)]
+pub struct RecoveringTx {
+    id: TxId,
+    serialized_transaction_description: FileLocation,
+    object_updates: Vec<(uuid::Uuid, FileLocation)>,
+    tx_disposition: transaction::Disposition,
+    paxos_state: paxos::PersistentState
+}
+
 struct Alloc {
     data_location: Option<FileLocation>,
     state: AllocationRecoveryState
 }
 
-// struct Request {
-//     client_id: super::ClientId,
-//     request_id: super::RequestId
-// }
+#[derive(Eq, PartialEq)]
+pub struct RecoveringAlloc {
+    id: TxId,
+    store_pointer: store::Pointer,
+    object_id: object::Id,
+    kind: object::Kind,
+    size: Option<u32>,
+    data: FileLocation,
+    refcount: object::Refcount,
+    timestamp: hlc::Timestamp,
+    allocation_transaction_id: transaction::Id,
+    serialized_revision_guard: ArcDataSlice
+}
 
 struct EntryBuffer {
     requests: Vec<super::RequestId>,
@@ -420,21 +450,79 @@ impl<T: Stream> Sweeper<T> {
 }
 
 
-// fn decode_tx_state<T: Buf>(buf: &mut T) -> Tx {
-//     let tx_id = TxId::decode_from(&mut buf);
-//     let std_len = buf.get_u16_le();
-//     let serialized_transaction_description = Bytes::with_capacity(std_len as usize);
-
-//}
 // pub struct TransactionRecoveryState {
 //     store_id: store::Id, 17
 //     transaction_id: 16
 //     serialized_transaction_description: Bytes, 14 (FileLocation)
-//     object_updates: Vec<transaction::ObjectUpdate>, 4:count + num_updates * (16:objuuid + FileLocation)
 //     tx_disposition: transaction::Disposition, 1
 //     paxos_state: paxos::PersistentState, 11 (1:mask-byte + 5:proposalId + 5:proposalId)
+//     object_updates: Vec<transaction::ObjectUpdate>, 4:count + num_updates * (16:objuuid + FileLocation)
 // }
-const STATIC_TX_SIZE: u64 = 17 + 16 + 14 + 4 + 1 + 11;
+fn decode_tx_state(buf: &mut Data) -> Result<RecoveringTx, DecodeError> {
+    if buf.remaining() < STATIC_TX_SIZE as usize {
+        Err(DecodeError{})
+    } else {
+        let id = TxId::decode_from(buf);
+        let txd_loc = FileLocation::decode_from(buf);
+        let disposition = transaction::Disposition::from_u8(buf.get_u8())?;
+        let mask = buf.get_u8();
+        let promise_peer = buf.get_u8();
+        let promise_proposal_id = buf.get_u32_le();
+        let accepted_peer = buf.get_u8();
+        let accepted_proposal_id = buf.get_u32_le();
+
+        let promised = if mask & 1 << 2 == 0 {
+            None
+        } else {
+            Some(paxos::ProposalId{
+                number: promise_proposal_id,
+                peer: promise_peer
+            })
+        };
+
+        let accepted = if mask & 1 << 1 == 0 {
+            None
+        } else {
+            let prop_id = paxos::ProposalId {
+                number: accepted_proposal_id,
+                peer: accepted_peer
+            };
+
+            let have_accepted = mask & 1 << 0 != 0;
+
+            Some((prop_id, have_accepted))
+        };
+
+        let pax = paxos::PersistentState{
+            promised,
+            accepted
+        };
+
+        let mut updates: Vec<(uuid::Uuid, FileLocation)> = Vec::new();
+        let nupdates = buf.get_u32_le();
+
+        if buf.remaining() < nupdates as usize * (16 + FILE_LOCATION_SIZE as usize) {
+            return Err(DecodeError{});
+        }
+
+        for _ in 0 .. nupdates {
+            let mut uuid_bytes: [u8; 16] = [0; 16];
+            buf.copy_to_slice(&mut uuid_bytes);
+            let location = FileLocation::decode_from(buf);
+            updates.push((uuid::Uuid::from_bytes(uuid_bytes), location));
+        }
+
+        Ok(RecoveringTx{
+            id,
+            serialized_transaction_description: txd_loc,
+            object_updates: updates,
+            tx_disposition: disposition,
+            paxos_state: pax
+        })
+    }
+}
+
+const STATIC_TX_SIZE: u64 = TXID_SIZE + FILE_LOCATION_SIZE + 1 + 11 + 4;
 
 fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
     let tx_id = TxId(tx.state.store_id, tx.id);
@@ -444,18 +532,6 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
         loc.encode_into(buf);
     }
 
-    match &tx.data_locations {
-        None => buf.put_u8(0u8),
-
-        Some(dl) => {
-            buf.put_u8(dl.len() as u8);
-            for (ou, loc) in tx.state.object_updates.iter().zip(dl.iter()) {
-                buf.put_slice(ou.object_id.0.as_bytes());
-                loc.encode_into(buf);
-            }
-        }
-    }
-    
     buf.put_u8(tx.state.tx_disposition.to_u8());
     let mut mask = 0u8;
     let mut promise_peer = 0u8;
@@ -480,6 +556,18 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
     buf.put_u32_le(promise_proposal_id);
     buf.put_u8(accepted_peer);
     buf.put_u32_le(accepted_proposal_id);
+
+    match &tx.data_locations {
+        None => buf.put_u32_le(0u32),
+
+        Some(dl) => {
+            buf.put_u32_le(dl.len() as u32);
+            for (ou, loc) in tx.state.object_updates.iter().zip(dl.iter()) {
+                buf.put_slice(ou.object_id.0.as_bytes());
+                loc.encode_into(buf);
+            }
+        }
+    }
 }
 
 //
