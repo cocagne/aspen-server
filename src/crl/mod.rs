@@ -17,6 +17,15 @@ use super::transaction;
 
 pub mod sweeper;
 
+#[derive(Debug)]
+struct DecodeError;
+
+impl From<crate::EncodingError> for DecodeError {
+    fn from(_: crate::EncodingError) -> DecodeError {
+        DecodeError{}
+    }
+}
+
 /// Unique Identifier for a state save request made to the Crash Recovery Log
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct RequestId(u64);

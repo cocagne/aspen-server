@@ -30,18 +30,40 @@ use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
+use super::DecodeError;
 
-#[derive(Debug)]
-struct DecodeError;
+pub mod stream;
 
-impl From<crate::EncodingError> for DecodeError {
-    fn from(_: crate::EncodingError) -> DecodeError {
-        DecodeError{}
-    }
-}
+use self::Stream;
 
+/// store::Id + UUID
+const TXID_SIZE: u64 = 17 + 16;
+
+// 2 byte file id + 8 byte offset + 4 byte length
+const FILE_LOCATION_SIZE: u64 = 2 + 8 + 4;
+
+/// Combines a store::Id and transaction::Id into a single identifier.
+/// 
+/// Both items must be used in conjunction to uniquely identify transaction/allocation state
+/// since multiple stores on the same host may be part of the same transaction.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 struct TxId(store::Id, transaction::Id);
+
+/// Wrapper for numericly identified file
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub struct FileId(u16);
+
+/// Wrapper for numericly identified stream
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub struct StreamId(usize);
+
+/// Identifies teh file, offset, and length of data stored in a file
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct FileLocation {
+    file_id: FileId,
+    offset: u64,
+    length: u32
+}
 
 impl TxId {
     fn encode_into(&self, buf: &mut DataMut) {
@@ -56,21 +78,6 @@ impl TxId {
         let transaction_id = transaction::Id(buf.get_uuid());
         TxId(store::Id {pool_uuid, pool_index }, transaction_id)
     }
-}
-
-const TXID_SIZE: u64 = 17 + 16;
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct FileId(u16);
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct StreamId(usize);
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub struct FileLocation {
-    file_id: FileId,
-    offset: u64,
-    length: u32
 }
 
 impl FileLocation {
@@ -100,7 +107,6 @@ impl FileLocation {
     }
 }
 
-const FILE_LOCATION_SIZE: u64 = 2 + 8 + 4;
 
 struct Tx {
     id: transaction::Id,
@@ -213,28 +219,6 @@ impl EntryBuffer {
     fn drop_allocation(&mut self, tx_id: TxId) {
         self.alloc_deletions.push(tx_id);
     }
-}
-
-pub trait Stream {
-
-    /// Assigns the ID for this stream
-    fn set_id(&self, id: StreamId);
-
-    /// Returns true iff this stream is ready for writing
-    fn is_ready(&self) -> bool;
-
-    /// Returns the last valid entry in this stream
-    fn last_entry(&self) -> Option<(u64, FileLocation)>;
-
-    /// Returns the current file Id, file UUID, Offset, & Maximum File Size
-    fn status(&self) -> (FileId, uuid::Uuid, u64, u64);
-
-    /// Writes the provided data to the file provided by status()
-    fn write(&self, data: Vec<ArcDataSlice>);
-
-    /// Rotates the underlying files and optionally returns a FileId
-    /// to prune entries from
-    fn rotate_files(&self) -> Option<FileId>;
 }
 
 pub struct BufferManager {
@@ -638,6 +622,140 @@ impl BufferManager {
             self.prune_data_stored_in_file(prune_file_id);
         }
     }
+}
+
+fn log_entry<T: Stream>(
+    entry_serial_number: u64,
+    earliest_entry_needed: u64,
+    last_entry_location: FileLocation,
+    txs: &Vec<&RefCell<Tx>>,
+    allocs: &Vec<&RefCell<Alloc>>,
+    tx_deletions: &Vec<TxId>,
+    alloc_deletions: &Vec<TxId>,
+    stream: &T) -> (Option<FileId>, FileLocation) {
+
+    let mut prune_file_from_log: Option<FileId> = None;
+
+    let (data_sz, tail_sz, num_data_buffers) = calculate_write_size(txs, allocs, 
+        tx_deletions, alloc_deletions);
+
+    let (file_id, file_uuid, initial_offset, padding_sz) = {
+        let (file_id, file_uuid, offset, max_size) = stream.status();
+
+        let padding = pad_to_4k_alignment(offset, data_sz, tail_sz);
+
+        if offset + data_sz + padding + tail_sz <= max_size {
+            (file_id, file_uuid, offset, padding)
+        }
+        else {
+            prune_file_from_log = stream.rotate_files();
+
+            let (file_id, file_uuid, offset, _) = stream.status();
+
+            (file_id, file_uuid, offset, padding)
+        }
+    };
+
+    let entry_offset = initial_offset + data_sz + padding_sz;
+
+    let mut offset = initial_offset;
+
+    let mut tail = DataMut::with_capacity((padding_sz + tail_sz) as usize);
+
+    tail.zfill(padding_sz);
+
+    let mut buffers = Vec::<ArcDataSlice>::with_capacity(num_data_buffers + 1);
+
+    let mut push_data_buffer = |b: ArcDataSlice| -> FileLocation {
+        let length = b.len();
+        let l = FileLocation{file_id : file_id, offset : offset, length : length as u32};
+        buffers.push(b);
+        offset += length as u64;
+        l
+    };
+
+    for tx in txs.iter() {
+        let mut mtx = tx.borrow_mut();
+
+        mtx.last_entry_serial = entry_serial_number;
+
+        if mtx.txd_location.is_none() {
+            let s = ArcDataSlice::from(&mtx.state.serialized_transaction_description);
+            mtx.txd_location = Some(push_data_buffer(s));
+        }
+
+        if mtx.data_locations.is_none() && !mtx.state.object_updates.is_empty() {
+            let mut v = Vec::new();
+            for ou in &mtx.state.object_updates {
+                v.push(push_data_buffer(ou.data.clone()));
+            }
+            mtx.data_locations = Some(v);
+        }
+
+        drop(mtx);
+
+        encode_tx_state(&tx.borrow(), &mut tail);
+    }
+
+    for a in allocs.iter() {
+        let mut ma = a.borrow_mut();
+
+        ma.last_entry_serial = entry_serial_number;
+
+        if ma.data_location.is_none() {
+            ma.data_location = Some(push_data_buffer(ma.state.data.clone()));
+        }
+
+        drop(ma);
+
+        encode_alloc_state(&a.borrow(), &mut tail);
+    }
+
+    for id in tx_deletions {
+        id.encode_into(&mut tail);   
+    }
+
+    for id in alloc_deletions {
+        id.encode_into(&mut tail);
+    }
+
+    // ---------- Static Entry Block ----------
+
+    assert_eq!((tail.capacity() - tail.len()) as u64, STATIC_ENTRY_SIZE);
+
+    let entry_block_offset = initial_offset + data_sz + tail.offset() as u64;
+
+    // Entry block always ends with:
+    //   entry_serial_number - 8
+    //   entry_begin_offset - 8
+    //   earliest_needed_entry_serial_number - 8
+    //   num_transactions - 4
+    //   num_allocations - 4
+    //   num_tx_deletions - 4
+    //   num_alloc_deletions - 4
+    //   prev_entry_file_location - 14 (2 + 8 + 4)
+    //   file_uuid - 16
+    tail.put_u64_le(entry_serial_number);
+    tail.put_u64_le(entry_offset);
+    tail.put_u64_le(earliest_entry_needed);
+    tail.put_u32_le(txs.len() as u32);
+    tail.put_u32_le(allocs.len() as u32);
+    tail.put_u32_le(tx_deletions.len() as u32);
+    tail.put_u32_le(alloc_deletions.len() as u32);
+    last_entry_location.encode_into(&mut tail);
+    tail.put_slice(file_uuid.as_bytes());
+
+    buffers.push(ArcDataSlice::from(tail.finalize()));
+
+    stream.write(buffers);
+
+    let entry_location = FileLocation{
+        file_id : file_id, 
+        offset : entry_block_offset, 
+        length : STATIC_ENTRY_SIZE as u32
+    };
+
+    (prune_file_from_log, entry_location)
 }
 
 pub struct Sweeper<T: Stream> {
