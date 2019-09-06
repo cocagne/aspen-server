@@ -1,6 +1,7 @@
 
 use super::{FileLocation, FileId};
-use crate::{ArcDataSlice};
+use crate::ArcDataSlice;
+use crate::crl::LogEntrySerialNumber;
 
 /// Wrapper for numericly identified stream
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
@@ -16,7 +17,7 @@ pub trait Stream {
     fn is_ready(&self) -> bool;
 
     /// Returns the last valid entry in this stream
-    fn last_entry(&self) -> Option<(u64, FileLocation)>;
+    fn last_entry(&self) -> Option<(LogEntrySerialNumber, FileLocation)>;
 
     /// Returns the current file Id, file UUID, Offset, & Maximum File Size
     fn status(&self) -> (FileId, uuid::Uuid, u64, u64);
@@ -24,7 +25,7 @@ pub trait Stream {
     /// Writes the provided data to the file provided by status()
     /// 
     /// Currently this method must always be able to write data of the maximum-possible size.
-    fn write(&self, data: Vec<ArcDataSlice>);
+    fn write(&self, data: Vec<ArcDataSlice>, entry_serial_number: LogEntrySerialNumber);
 
     /// Rotates the underlying files and optionally returns a FileId
     /// to prune entries from

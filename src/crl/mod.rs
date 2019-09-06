@@ -74,6 +74,16 @@ pub struct AllocationRecoveryState {
     serialized_revision_guard: ArcDataSlice
 }
 
+/// Identifies an entry within the Crash Recovery Log
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub struct LogEntrySerialNumber(u64);
+
+impl LogEntrySerialNumber {
+    pub(crate) fn next(self) -> LogEntrySerialNumber {
+        LogEntrySerialNumber( self.0 + 1 )
+    }
+}
+
 /// Client interface to the Crash Recovery Log
 pub struct Crl {
     client_id: ClientId,

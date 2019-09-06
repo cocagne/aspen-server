@@ -31,6 +31,7 @@ use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
 use super::DecodeError;
+use crate::crl::LogEntrySerialNumber;
 
 pub mod stream;
 pub(crate) mod buffer_mgr;
@@ -148,7 +149,7 @@ pub(crate) struct Tx {
     txd_location: Option<FileLocation>,
     data_locations: Option<Vec<FileLocation>>,
     state: TransactionRecoveryState,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -158,7 +159,7 @@ pub(crate) struct RecoveringTx {
     object_updates: Vec<(uuid::Uuid, FileLocation)>,
     tx_disposition: transaction::Disposition,
     paxos_state: paxos::PersistentState,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 pub struct RecoveredTx {
@@ -169,13 +170,13 @@ pub struct RecoveredTx {
     update_locations: Vec<(uuid::Uuid, FileLocation)>,
     tx_disposition: transaction::Disposition,
     paxos_state: paxos::PersistentState,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 pub(crate) struct Alloc {
     data_location: Option<FileLocation>,
     state: AllocationRecoveryState,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -189,7 +190,7 @@ pub(crate) struct RecoveringAlloc {
     refcount: object::Refcount,
     timestamp: hlc::Timestamp,
     serialized_revision_guard: ArcDataSlice,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 pub struct RecoveredAlloc {
@@ -203,7 +204,7 @@ pub struct RecoveredAlloc {
     refcount: object::Refcount,
     timestamp: hlc::Timestamp,
     serialized_revision_guard: ArcDataSlice,
-    last_entry_serial: u64
+    last_entry_serial: LogEntrySerialNumber
 }
 
 pub(crate) struct EntryBuffer {

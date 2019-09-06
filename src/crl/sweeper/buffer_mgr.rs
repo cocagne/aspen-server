@@ -1,4 +1,5 @@
 use super::*;
+use crate::crl::LogEntrySerialNumber;
 
 pub struct BufferManager {
     transactions: HashMap<TxId, RefCell<Tx>>,
@@ -6,9 +7,9 @@ pub struct BufferManager {
     processing_buffer: RefCell<EntryBuffer>,
     current_buffer: RefCell<EntryBuffer>,
     entry_window_size: usize,
-    next_entry_serial: u64,
+    next_entry_serial: LogEntrySerialNumber,
     last_entry_location: FileLocation,
-    earliest_entry_needed: u64
+    earliest_entry_needed: LogEntrySerialNumber
 }
 
 impl BufferManager {
@@ -19,7 +20,7 @@ impl BufferManager {
         recovered_transactions: &Vec<RecoveredTx>,
         recovered_allocations: &Vec<RecoveredAlloc>) -> BufferManager {
 
-        let mut last_serial = 0;
+        let mut last_serial = LogEntrySerialNumber(0);
         let mut last_location = FileLocation {
             file_id: FileId(0u16),
             offset: 0u64,
@@ -75,7 +76,7 @@ impl BufferManager {
 
         let earliest_entry_needed = transactions.iter().map(|(_,v)| v.borrow().last_entry_serial).chain(
             allocations.iter().map(|(_,v)| v.borrow().last_entry_serial)
-        ).fold(last_serial+1, |a, s| {
+        ).fold(last_serial.next(), |a, s| {
             if s < a {
                 s
             } else {
@@ -89,7 +90,7 @@ impl BufferManager {
             processing_buffer: RefCell::new(EntryBuffer::new()),
             current_buffer: RefCell::new(EntryBuffer::new()),
             entry_window_size,
-            next_entry_serial: last_serial+1,
+            next_entry_serial: last_serial.next(),
             last_entry_location: last_location,
             earliest_entry_needed
         }
@@ -106,7 +107,7 @@ impl BufferManager {
         object_updates: Vec<transaction::ObjectUpdate>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState,
-        last_entry_serial: Option<u64>) {
+        last_entry_serial: Option<LogEntrySerialNumber>) {
         
         let txid = TxId(store_id, transaction_id);
 
@@ -174,7 +175,7 @@ impl BufferManager {
         timestamp: hlc::Timestamp,
         allocation_transaction_id: transaction::Id,
         serialized_revision_guard: ArcDataSlice,
-        last_entry_serial: Option<u64>) {
+        last_entry_serial: Option<LogEntrySerialNumber>) {
 
         let txid = TxId(store_id, allocation_transaction_id);
 
@@ -242,12 +243,12 @@ impl BufferManager {
 
         let entry_serial = self.next_entry_serial;
 
-        self.next_entry_serial += 1;
+        self.next_entry_serial = self.next_entry_serial.next();
 
         // If this entry falls on a window-size boundary, put all transactions and allocations
         // written behind the window-size into the entry buffer
-        if entry_serial % self.entry_window_size as u64 == 0 {
-            let earliest = entry_serial - self.entry_window_size as u64;
+        if entry_serial.0 % self.entry_window_size as u64 == 0 {
+            let earliest = LogEntrySerialNumber(entry_serial.0 - self.entry_window_size as u64);
 
             for (txid, tx) in &self.transactions {
                 if tx.borrow().last_entry_serial < earliest {

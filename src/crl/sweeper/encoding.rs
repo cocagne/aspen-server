@@ -1,8 +1,9 @@
 use super::*;
+use crate::crl::LogEntrySerialNumber;
 
 pub(crate) fn log_entry<T: Stream>(
-    entry_serial_number: u64,
-    earliest_entry_needed: u64,
+    entry_serial_number: LogEntrySerialNumber,
+    earliest_entry_needed: LogEntrySerialNumber,
     last_entry_location: FileLocation,
     txs: &Vec<&RefCell<Tx>>,
     allocs: &Vec<&RefCell<Alloc>>,
@@ -111,9 +112,9 @@ pub(crate) fn log_entry<T: Stream>(
     //   num_alloc_deletions - 4
     //   prev_entry_file_location - 14 (2 + 8 + 4)
     //   file_uuid - 16
-    tail.put_u64_le(entry_serial_number);
+    tail.put_u64_le(entry_serial_number.0);
     tail.put_u64_le(entry_offset);
-    tail.put_u64_le(earliest_entry_needed);
+    tail.put_u64_le(earliest_entry_needed.0);
     tail.put_u32_le(txs.len() as u32);
     tail.put_u32_le(allocs.len() as u32);
     tail.put_u32_le(tx_deletions.len() as u32);
@@ -123,7 +124,7 @@ pub(crate) fn log_entry<T: Stream>(
 
     buffers.push(ArcDataSlice::from(tail.finalize()));
 
-    stream.write(buffers);
+    stream.write(buffers, entry_serial_number);
 
     let entry_location = FileLocation{
         file_id : file_id, 
@@ -142,7 +143,7 @@ pub(crate) fn log_entry<T: Stream>(
 //     paxos_state: paxos::PersistentState, 11 (1:mask-byte + 5:proposalId + 5:proposalId)
 //     object_updates: Vec<transaction::ObjectUpdate>, 4:count + num_updates * (16:objuuid + FileLocation)
 // }
-fn decode_tx_state(buf: &mut Data, entry_serial: u64) -> Result<RecoveringTx, DecodeError> {
+fn decode_tx_state(buf: &mut Data, entry_serial: LogEntrySerialNumber) -> Result<RecoveringTx, DecodeError> {
     if buf.remaining() < STATIC_TX_SIZE as usize {
         Err(DecodeError{})
     } else {
@@ -259,7 +260,7 @@ fn encode_tx_state(tx: &Tx, buf: &mut DataMut) {
 
 
 
-fn decode_alloc_state(buf: &mut Data, entry_serial: u64) -> Result<RecoveringAlloc, DecodeError> {
+fn decode_alloc_state(buf: &mut Data, entry_serial: LogEntrySerialNumber) -> Result<RecoveringAlloc, DecodeError> {
     if buf.remaining() < STATIC_ARS_SIZE as usize {
         Err(DecodeError{})
     } else {
@@ -503,7 +504,7 @@ mod tests {
                 tx_disposition,
                 paxos_state
             },
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -514,7 +515,7 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_tx_state(&mut r, 0).unwrap();
+        let ra = decode_tx_state(&mut r, LogEntrySerialNumber(0)).unwrap();
 
         let expected = RecoveringTx {
             id: TxId(store_id, txid),
@@ -522,7 +523,7 @@ mod tests {
             object_updates: Vec::new(),
             tx_disposition,
             paxos_state,
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
 
         assert_eq!(ra, expected);
@@ -562,7 +563,7 @@ mod tests {
                 tx_disposition,
                 paxos_state
             },
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -573,7 +574,7 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_tx_state(&mut r, 0).unwrap();
+        let ra = decode_tx_state(&mut r, LogEntrySerialNumber(0)).unwrap();
 
         let expected = RecoveringTx {
             id: TxId(store_id, txid),
@@ -581,7 +582,7 @@ mod tests {
             object_updates: vec![(ids[2], u1), (ids[3], u2)],
             tx_disposition,
             paxos_state,
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
 
         assert_eq!(ra, expected);
@@ -623,7 +624,7 @@ mod tests {
                 allocation_transaction_id,
                 serialized_revision_guard: srg.clone()
             },
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
         
         let mut m = DataMut::with_capacity(4096);
@@ -634,7 +635,7 @@ mod tests {
 
         let mut r = Data::from(m);
 
-        let ra = decode_alloc_state(&mut r, 0).unwrap();
+        let ra = decode_alloc_state(&mut r, LogEntrySerialNumber(0)).unwrap();
 
         let expected = RecoveringAlloc {
             id: TxId(store_id, txid),
@@ -646,7 +647,7 @@ mod tests {
             refcount: rc,
             timestamp,
             serialized_revision_guard: srg.clone(),
-            last_entry_serial: 0
+            last_entry_serial: LogEntrySerialNumber(0)
         };
 
         assert_eq!(ra, expected);
