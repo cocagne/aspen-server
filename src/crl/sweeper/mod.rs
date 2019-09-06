@@ -34,7 +34,7 @@ use super::DecodeError;
 
 pub mod stream;
 
-use self::Stream;
+pub use self::stream::Stream;
 
 /// store::Id + UUID
 const TXID_SIZE: u64 = 17 + 16;
@@ -52,10 +52,6 @@ struct TxId(store::Id, transaction::Id);
 /// Wrapper for numericly identified file
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct FileId(u16);
-
-/// Wrapper for numericly identified stream
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct StreamId(usize);
 
 /// Identifies teh file, offset, and length of data stored in a file
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -484,8 +480,6 @@ impl BufferManager {
             self.earliest_entry_needed = earliest;
         }
 
-        let mut prune_file_from_log: Option<FileId> = None;
-
         let mut txs: Vec<&RefCell<Tx>> = Vec::new();
         let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
 
@@ -497,116 +491,12 @@ impl BufferManager {
             self.allocations.get(&txid).map( |a| allocs.push(a) );
         }
 
-        let (data_sz, tail_sz, num_data_buffers) = calculate_write_size( 
-            &txs, &allocs, &buf.tx_deletions, &buf.alloc_deletions);
+        let (prune_file_from_log, entry_location) = log_entry(
+            entry_serial, self.earliest_entry_needed, self.last_entry_location, &txs, &allocs,
+            &buf.tx_deletions, &buf.alloc_deletions, stream
+        );
 
-        let (file_id, file_uuid, initial_offset, padding_sz) = {
-            let (file_id, file_uuid, offset, max_size) = stream.status();
-
-            let padding = pad_to_4k_alignment(offset, data_sz, tail_sz);
-
-            if offset + data_sz + padding + tail_sz <= max_size {
-                (file_id, file_uuid, offset, padding)
-            }
-            else {
-                prune_file_from_log = stream.rotate_files();
-
-                let (file_id, file_uuid, offset, _) = stream.status();
-
-                (file_id, file_uuid, offset, padding)
-            }
-        };
-
-        let entry_offset = initial_offset + data_sz + padding_sz;
-
-        let mut offset = initial_offset;
-
-        let mut tail = DataMut::with_capacity((padding_sz + tail_sz) as usize);
-
-        tail.zfill(padding_sz);
-
-        let mut buffers = Vec::<ArcDataSlice>::with_capacity(num_data_buffers + 1);
-
-        let mut push_data_buffer = |b: ArcDataSlice| -> FileLocation {
-            let length = b.len();
-            let l = FileLocation{file_id : file_id, offset : offset, length : length as u32};
-            buffers.push(b);
-            offset += length as u64;
-            l
-        };
-
-        for tx in txs.iter() {
-            let mut mtx = tx.borrow_mut();
-
-            mtx.last_entry_serial = entry_serial;
-
-            if mtx.txd_location.is_none() {
-                let s = ArcDataSlice::from(&mtx.state.serialized_transaction_description);
-                mtx.txd_location = Some(push_data_buffer(s));
-            }
-
-            if mtx.data_locations.is_none() && !mtx.state.object_updates.is_empty() {
-                let mut v = Vec::new();
-                for ou in &mtx.state.object_updates {
-                    v.push(push_data_buffer(ou.data.clone()));
-                }
-                mtx.data_locations = Some(v);
-            }
-
-            drop(mtx);
-
-            encode_tx_state(&tx.borrow(), &mut tail);
-        }
-
-        for a in allocs.iter() {
-            let mut ma = a.borrow_mut();
-
-            ma.last_entry_serial = entry_serial;
-
-            if ma.data_location.is_none() {
-                ma.data_location = Some(push_data_buffer(ma.state.data.clone()));
-            }
-
-            drop(ma);
-
-            encode_alloc_state(&a.borrow(), &mut tail);
-        }
-
-        for id in &buf.tx_deletions {
-            id.encode_into(&mut tail);   
-        }
-
-        for id in &buf.alloc_deletions {
-            id.encode_into(&mut tail);
-        }
-
-        // ---------- Static Entry Block ----------
-
-        assert_eq!((tail.capacity() - tail.len()) as u64, STATIC_ENTRY_SIZE);
-
-        // Entry block always ends with:
-        //   entry_serial_number - 8
-        //   entry_begin_offset - 8
-        //   earliest_needed_entry_serial_number - 8
-        //   num_transactions - 4
-        //   num_allocations - 4
-        //   num_tx_deletions - 4
-        //   num_alloc_deletions - 4
-        //   prev_entry_file_location - 14 (2 + 8 + 4)
-        //   file_uuid - 16
-        tail.put_u64_le(entry_serial);
-        tail.put_u64_le(entry_offset);
-        tail.put_u64_le(self.earliest_entry_needed);
-        tail.put_u32_le(txs.len() as u32);
-        tail.put_u32_le(allocs.len() as u32);
-        tail.put_u32_le(buf.tx_deletions.len() as u32);
-        tail.put_u32_le(buf.alloc_deletions.len() as u32);
-        self.last_entry_location.encode_into(&mut tail);
-        tail.put_slice(file_uuid.as_bytes());
-
-        buffers.push(ArcDataSlice::from(tail.finalize()));
-
-        stream.write(buffers);
+        self.last_entry_location = entry_location;
 
         drop(buf); // Drop immutable borrow so we can re-borrow as mutable and clear the buffer
 
