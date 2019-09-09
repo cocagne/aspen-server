@@ -27,7 +27,7 @@ impl From<crate::EncodingError> for DecodeError {
 }
 
 /// Unique Identifier for a state save request made to the Crash Recovery Log
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct RequestId(u64);
 
 /// Used to notify completion of state save requests made to the Crash Recovery Log
@@ -46,7 +46,7 @@ pub trait SaveCompleteHandler {
 pub trait InterfaceFactory {
     /// Creates a new Crl trait object that will notify the supplied SaveCompleteHandler
     /// when requests complete
-    fn new(save_handler: Box<dyn SaveCompleteHandler>) -> Crl;
+    fn new(&self, save_handler: Box<dyn SaveCompleteHandler>) -> Box<dyn Crl>;
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash
@@ -74,62 +74,31 @@ pub struct AllocationRecoveryState {
     serialized_revision_guard: ArcDataSlice
 }
 
-/// Identifies an entry within the Crash Recovery Log
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct LogEntrySerialNumber(u64);
 
-impl LogEntrySerialNumber {
-    pub(crate) fn next(self) -> LogEntrySerialNumber {
-        LogEntrySerialNumber( self.0 + 1 )
-    }
-}
 
 /// Client interface to the Crash Recovery Log
-pub struct Crl {
-    client_id: ClientId,
-    sender: std::sync::mpsc::Sender<Request>,
-    next_request_number: u64
-}
-
-impl Crl {
-
-    fn new(client_id: ClientId, sender: std::sync::mpsc::Sender<Request>) -> Crl {
-        Crl { 
-            client_id: client_id,
-            sender: sender,
-            next_request_number: 0
-        }
-    }
+pub trait Crl {
 
     /// Provides the full recovery state for a store
     /// 
-    /// This method should only be used during data store initialization and for capturing store CRL state for
-    /// transferring that store to another server.
+    /// This method should only be used during data store initialization and for capturing store
+    /// CRL state for transferring that store to another server.
     /// 
     /// # Panics
     /// 
     /// Panics if the channel to the CRL is closed
-    pub fn get_full_recovery_state(&self, store_id: store::Id) -> 
-        (Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>) {
-        let (response_sender, receiver) = std::sync::mpsc::channel();
-        self.sender.send(Request::GetFullRecoveryState{store_id: store_id, sender: response_sender}).unwrap();
-        let t = receiver.recv().unwrap();
-        (t.0, t.1)
-    }
-
-    fn next_request(&mut self) -> RequestId {
-        let request_id = RequestId(self.next_request_number);
-        self.next_request_number += 1;
-        request_id
-    }
+    fn get_full_recovery_state(
+        &self, 
+        store_id: store::Id) -> (Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>);
 
     /// Saves transaction state into the CRL
     /// 
-    /// The transaction description and object updates should only be included once. When the state
-    /// has been successfully stored to persistent media, the SaveCompleteHandler.transaction_state_saved
-    /// method will be called with the RequestId returned from this function. If an error is encountered
-    /// and/or the state cannot be saved, the completion handler will never be called.
-    pub fn save_transaction_state(
+    /// The transaction description and object updates should only be included once. When the 
+    /// state has been successfully stored to persistent media, the 
+    /// SaveCompleteHandler.transaction_state_saved method will be called with the RequestId 
+    /// returned from this function. If an error is encountered and/or the state cannot be
+    /// saved, the completion handler will never be called.
+    fn save_transaction_state(
         &mut self,
         store_id: store::Id,
         transaction_id: transaction::Id,
@@ -137,68 +106,30 @@ impl Crl {
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
-    ) -> RequestId {
-        let request_id = self.next_request();
-        match serialized_transaction_description {
-            None => {
-                self.sender.send(Request::UpdateTransactionState{
-                    client_id: self.client_id,
-                    request_id,
-                    store_id,
-                    transaction_id,
-                    object_updates,
-                    tx_disposition,
-                    paxos_state
-                }).unwrap_or(()); // Explicitly ignore any errors
-            }
-            Some(data) => {
-                self.sender.send(Request::AddTransactionState{
-                    client_id: self.client_id,
-                    request_id,
-                    store_id,
-                    transaction_id,
-                    serialized_transaction_description: data,
-                    object_updates: object_updates.unwrap_or(Vec::new()),
-                    tx_disposition: tx_disposition,
-                    paxos_state: paxos_state
-                }).unwrap_or(()); // Explicitly ignore any errors
-            }
-        }
-        
-        request_id
-    }
+    ) -> RequestId;
 
     /// Drops transaction data from the log.
     /// 
     /// Informs the CRL that object data associated with the transaction is no longer needed
     /// for recovery purposes and that it may be dropped from the log.
-    pub fn drop_transaction_object_data(
+    fn drop_transaction_object_data(
         &self,
         store_id: store::Id,
         transaction_id: transaction::Id
-    ) {
-        self.sender.send(Request::DropTransactionData{
-            store_id: store_id,
-            transaction_id: transaction_id,
-        }).unwrap_or(()); // Explicitly ignore any errors
-    }
+    );
 
     /// Deletes the saved transaction state from the log.
-    pub fn delete_transaction_state(
+    fn delete_transaction_state(
         &self,
         store_id: store::Id,
         transaction_id: transaction::Id
-    ) {
-        self.sender.send(Request::DeleteTransactionState{
-            store_id: store_id,
-            transaction_id: transaction_id,
-        }).unwrap_or(()); // Explicitly ignore any errors
-    }
+    );
 
     /// Saves object allocation state into the CRL
     /// 
-    /// Similar to transaction state saves, no completion notice will be provided if an error is encountered
-    pub fn save_allocation_state(
+    /// Similar to transaction state saves, no completion notice will be provided if an error
+    /// is encountered
+    fn save_allocation_state(
         &mut self,
         store_id: store::Id,
         store_pointer: store::Pointer,
@@ -210,82 +141,10 @@ impl Crl {
         timestamp: hlc::Timestamp,
         allocation_transaction_id: transaction::Id,
         serialized_revision_guard: ArcDataSlice
-    ) -> RequestId {
-        let request_id = self.next_request();
-        self.sender.send(Request::SaveAllocationState{
-            client_id: self.client_id,
-            request_id: request_id,
-            state: AllocationRecoveryState {
-                store_id: store_id,
-                store_pointer: store_pointer,
-                id: id,
-                kind: kind,
-                size: size,
-                data: data,
-                refcount: refcount,
-                timestamp: timestamp,
-                allocation_transaction_id: allocation_transaction_id,
-                serialized_revision_guard: serialized_revision_guard
-            }
-        }).unwrap_or(()); // Explicitly ignore any errors
-        request_id
-    }
+    ) -> RequestId;
 
-    pub fn delete_allocation_state(
+    fn delete_allocation_state(
         &self,
         store_id: store::Id, 
-        allocation_transaction_id: transaction::Id) {
-        self.sender.send(Request::DeleteAllocationState{
-            store_id: store_id,
-            allocation_transaction_id: allocation_transaction_id
-        }).unwrap_or(()); // Explicitly ignore any errors
-    }
+        allocation_transaction_id: transaction::Id);
 }
-
-#[derive(Clone, Copy)]
-struct ClientId(u32);
-
-enum Request {
-    AddTransactionState {
-        client_id: ClientId,
-        request_id: RequestId,
-        store_id: store::Id,
-        transaction_id: transaction::Id,
-        serialized_transaction_description: ArcData,
-        object_updates: Vec<transaction::ObjectUpdate>,
-        tx_disposition: transaction::Disposition,
-        paxos_state: paxos::PersistentState
-    },
-    UpdateTransactionState {
-        client_id: ClientId,
-        request_id: RequestId,
-        store_id: store::Id,
-        transaction_id: transaction::Id,
-        object_updates: Option<Vec<transaction::ObjectUpdate>>,
-        tx_disposition: transaction::Disposition,
-        paxos_state: paxos::PersistentState
-    },
-    DropTransactionData {
-        store_id: store::Id,
-        transaction_id: transaction::Id,
-    },
-    DeleteTransactionState {
-        store_id: store::Id,
-        transaction_id: transaction::Id,
-    },
-    SaveAllocationState {
-        client_id: ClientId,
-        request_id: RequestId,
-        state: AllocationRecoveryState
-    },
-    DeleteAllocationState {
-        store_id: store::Id,
-        allocation_transaction_id: transaction::Id,
-    },
-    GetFullRecoveryState {
-        store_id: store::Id,
-        sender: std::sync::mpsc::Sender<FullStateResponse>
-    }
-}
-
-struct FullStateResponse(Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>);

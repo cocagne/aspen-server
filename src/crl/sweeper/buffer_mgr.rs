@@ -1,7 +1,6 @@
 use super::*;
-use crate::crl::LogEntrySerialNumber;
 
-pub struct BufferManager {
+pub(super) struct BufferManager {
     transactions: HashMap<TxId, RefCell<Tx>>,
     allocations: HashMap<TxId, RefCell<Alloc>>,
     processing_buffer: RefCell<EntryBuffer>,
@@ -14,7 +13,7 @@ pub struct BufferManager {
 
 impl BufferManager {
 
-    pub fn new<T: Stream>(
+    pub(super) fn new<T: Stream>(
         streams: &Vec<T>, 
         entry_window_size: usize,
         recovered_transactions: &Vec<RecoveredTx>,

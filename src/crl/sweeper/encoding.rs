@@ -1,7 +1,6 @@
 use super::*;
-use crate::crl::LogEntrySerialNumber;
 
-pub(crate) fn log_entry<T: Stream>(
+pub(super) fn log_entry<T: Stream>(
     entry_serial_number: LogEntrySerialNumber,
     earliest_entry_needed: LogEntrySerialNumber,
     last_entry_location: FileLocation,

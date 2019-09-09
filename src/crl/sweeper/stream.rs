@@ -1,14 +1,13 @@
 
-use super::{FileLocation, FileId};
+use super::{FileLocation, FileId, LogEntrySerialNumber};
 use crate::ArcDataSlice;
-use crate::crl::LogEntrySerialNumber;
 
 /// Wrapper for numericly identified stream
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct StreamId(usize);
+pub(super) struct StreamId(usize);
 
 /// Abstract interface to a multi-file log stream
-pub trait Stream {
+pub(super) trait Stream {
 
     /// Assigns the ID for this stream
     fn set_id(&self, id: StreamId);

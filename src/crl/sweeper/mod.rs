@@ -30,14 +30,15 @@ use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
-use super::DecodeError;
-use crate::crl::LogEntrySerialNumber;
+use super::{DecodeError, RequestId, SaveCompleteHandler};
 
-pub mod stream;
+pub(crate) mod stream;
 pub(crate) mod buffer_mgr;
 pub(crate) mod encoding;
+pub(crate) mod frontend;
+pub(crate) mod backend;
 
-pub use self::stream::Stream;
+pub(self) use self::stream::Stream;
 
 /// store::Id + UUID
 const TXID_SIZE: u64 = 17 + 16;
@@ -82,20 +83,30 @@ const STATIC_ENTRY_SIZE: u64 = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 14 + 16;
 // }
 const STATIC_ARS_SIZE: u64 = 17 + 16 + 4 + 16 + 1 + 4 + 14 + 8 + 8 + 4;
 
+/// Identifies an entry within the Crash Recovery Log
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub(self) struct LogEntrySerialNumber(u64);
+
+impl LogEntrySerialNumber {
+    pub(crate) fn next(self) -> LogEntrySerialNumber {
+        LogEntrySerialNumber( self.0 + 1 )
+    }
+}
+
 /// Combines a store::Id and transaction::Id into a single identifier.
 /// 
 /// Both items must be used in conjunction to uniquely identify transaction/allocation state
 /// since multiple stores on the same host may be part of the same transaction.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
-pub(crate) struct TxId(store::Id, transaction::Id);
+pub(self) struct TxId(store::Id, transaction::Id);
 
 /// Wrapper for numericly identified file
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct FileId(u16);
+pub(self) struct FileId(u16);
 
 /// Identifies teh file, offset, and length of data stored in a file
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub struct FileLocation {
+pub(self) struct FileLocation {
     file_id: FileId,
     offset: u64,
     length: u32
@@ -144,7 +155,7 @@ impl FileLocation {
 }
 
 
-pub(crate) struct Tx {
+pub(self) struct Tx {
     id: transaction::Id,
     txd_location: Option<FileLocation>,
     data_locations: Option<Vec<FileLocation>>,
@@ -153,7 +164,7 @@ pub(crate) struct Tx {
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub(crate) struct RecoveringTx {
+pub(self) struct RecoveringTx {
     id: TxId,
     serialized_transaction_description: FileLocation,
     object_updates: Vec<(uuid::Uuid, FileLocation)>,
@@ -162,7 +173,7 @@ pub(crate) struct RecoveringTx {
     last_entry_serial: LogEntrySerialNumber
 }
 
-pub struct RecoveredTx {
+pub(self) struct RecoveredTx {
     id: TxId,
     txd_location: FileLocation,
     serialized_transaction_description: ArcData,
@@ -173,14 +184,14 @@ pub struct RecoveredTx {
     last_entry_serial: LogEntrySerialNumber
 }
 
-pub(crate) struct Alloc {
+pub(self) struct Alloc {
     data_location: Option<FileLocation>,
     state: AllocationRecoveryState,
     last_entry_serial: LogEntrySerialNumber
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub(crate) struct RecoveringAlloc {
+pub(self) struct RecoveringAlloc {
     id: TxId,
     store_pointer: store::Pointer,
     object_id: object::Id,
@@ -193,7 +204,7 @@ pub(crate) struct RecoveringAlloc {
     last_entry_serial: LogEntrySerialNumber
 }
 
-pub struct RecoveredAlloc {
+pub(self) struct RecoveredAlloc {
     id: TxId,
     store_pointer: store::Pointer,
     object_id: object::Id,
@@ -207,7 +218,7 @@ pub struct RecoveredAlloc {
     last_entry_serial: LogEntrySerialNumber
 }
 
-pub(crate) struct EntryBuffer {
+pub(self) struct EntryBuffer {
     requests: Vec<super::RequestId>,
     tx_set: HashSet<TxId>,
     tx_deletions: Vec<TxId>,
@@ -257,45 +268,64 @@ impl EntryBuffer {
     }
 }
 
-pub struct Sweeper<T: Stream> {
-    streams: Vec<T>,
-    buf_mgr: buffer_mgr::BufferManager
+#[derive(Clone, Copy)]
+pub(self) struct ClientId(u32);
+
+pub(self) struct FullStateResponse(
+    Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>);
+
+pub(self) struct RegisterClientResponse {
+        client_id: ClientId
 }
 
-impl<T: Stream> Sweeper<T> {
-
-    pub fn new(
-        streams: Vec<T>,
-        entry_window_size: usize,
-        recovered_transactions: &Vec<RecoveredTx>,
-        recovered_allocations: &Vec<RecoveredAlloc>) -> Sweeper<T> {
-
-        let buf_mgr = buffer_mgr::BufferManager::new(&streams, entry_window_size, 
-            recovered_transactions, recovered_allocations);
-
-        Sweeper {
-            streams: streams,
-            buf_mgr: buf_mgr
-        }
-    }
-
-    fn find_ready_stream(&self) -> Option<usize> {
-        for (idx, s) in self.streams.iter().enumerate() {
-            if s.is_ready() {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    pub fn commit_entry(&mut self) {
-        if ! self.buf_mgr.is_empty() {
-            if let Some(idx) = self.find_ready_stream() {
-                self.buf_mgr.log_entry(&self.streams[idx]);
-            }
-        }
-    }
+pub(self) enum Message {
+    AddTransactionState {
+        client_id: ClientId,
+        request_id: RequestId,
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+        serialized_transaction_description: ArcData,
+        object_updates: Vec<transaction::ObjectUpdate>,
+        tx_disposition: transaction::Disposition,
+        paxos_state: paxos::PersistentState
+    },
+    UpdateTransactionState {
+        client_id: ClientId,
+        request_id: RequestId,
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+        object_updates: Option<Vec<transaction::ObjectUpdate>>,
+        tx_disposition: transaction::Disposition,
+        paxos_state: paxos::PersistentState
+    },
+    DropTransactionData {
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+    },
+    DeleteTransactionState {
+        store_id: store::Id,
+        transaction_id: transaction::Id,
+    },
+    SaveAllocationState {
+        client_id: ClientId,
+        request_id: RequestId,
+        state: AllocationRecoveryState
+    },
+    DeleteAllocationState {
+        store_id: store::Id,
+        allocation_transaction_id: transaction::Id,
+    },
+    GetFullRecoveryState {
+        store_id: store::Id,
+        sender: std::sync::mpsc::Sender<FullStateResponse>
+    },
+    RegisterClientRequest {
+        sender: std::sync::mpsc::Sender<RegisterClientResponse>,
+        handler: Box<dyn SaveCompleteHandler>
+    },
+    
 }
+
 
 
 
