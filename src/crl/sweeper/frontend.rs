@@ -1,16 +1,17 @@
 use super::*;
-use crate::crl::{Crl, InterfaceFactory, SaveCompleteHandler};
+use crate::crl::{Crl, InterfaceFactory, RequestCompletionHandler};
+use crossbeam::crossbeam_channel;
 
-pub(super) struct FrontendFactory {
-    sender: std::sync::mpsc::Sender<Message>
+pub struct FrontendFactory {
+    sender: crossbeam_channel::Sender<Request>
 }
 
 impl InterfaceFactory for FrontendFactory {
     
-    fn new(&self, save_handler: Box<dyn SaveCompleteHandler>) -> Box<dyn Crl> {
-        let (response_sender, receiver) = std::sync::mpsc::channel();
+    fn new(&self, save_handler: Box<dyn RequestCompletionHandler>) -> Box<dyn Crl> {
+        let (response_sender, receiver) = crossbeam_channel::unbounded();
 
-        self.sender.send(Message::RegisterClientRequest{sender: response_sender, handler: save_handler}).unwrap();
+        self.sender.send(Request::RegisterClientRequest{sender: response_sender, handler: save_handler}).unwrap();
 
         let client_id = receiver.recv().unwrap().client_id;
 
@@ -20,13 +21,13 @@ impl InterfaceFactory for FrontendFactory {
 
 pub(super) struct Frontend {
     client_id: ClientId,
-    sender: std::sync::mpsc::Sender<Message>,
+    sender: crossbeam_channel::Sender<Request>,
     next_request_number: u64
 }
 
 impl Frontend {
 
-    pub(super) fn new(client_id: ClientId, sender: std::sync::mpsc::Sender<Message>) -> Frontend {
+    pub(super) fn new(client_id: ClientId, sender: crossbeam_channel::Sender<Request>) -> Frontend {
         Frontend { 
             client_id: client_id,
             sender: sender,
@@ -45,8 +46,8 @@ impl crate::crl::Crl for Frontend {
 
     fn get_full_recovery_state(&self, store_id: store::Id) -> 
         (Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>) {
-        let (response_sender, receiver) = std::sync::mpsc::channel();
-        self.sender.send(Message::GetFullRecoveryState{store_id: store_id, sender: response_sender}).unwrap();
+        let (response_sender, receiver) = crossbeam_channel::unbounded();
+        self.sender.send(Request::GetFullRecoveryState{store_id: store_id, sender: response_sender}).unwrap();
         let t = receiver.recv().unwrap();
         (t.0, t.1)
     }
@@ -55,38 +56,23 @@ impl crate::crl::Crl for Frontend {
         &mut self,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: Option<ArcData>,
+        serialized_transaction_description: ArcData,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
     ) -> RequestId {
         let request_id = self.next_request();
-        match serialized_transaction_description {
-            None => {
-                self.sender.send(Message::UpdateTransactionState{
-                    client_id: self.client_id,
-                    request_id,
-                    store_id,
-                    transaction_id,
-                    object_updates,
-                    tx_disposition,
-                    paxos_state
-                }).unwrap_or(()); // Explicitly ignore any errors
-            }
-            Some(data) => {
-                self.sender.send(Message::AddTransactionState{
-                    client_id: self.client_id,
-                    request_id,
-                    store_id,
-                    transaction_id,
-                    serialized_transaction_description: data,
-                    object_updates: object_updates.unwrap_or(Vec::new()),
-                    tx_disposition: tx_disposition,
-                    paxos_state: paxos_state
-                }).unwrap_or(()); // Explicitly ignore any errors
-            }
-        }
         
+        self.sender.send(Request::SaveTransactionState{
+            client_request: ClientRequest(self.client_id, request_id),
+            store_id,
+            transaction_id,
+            serialized_transaction_description,
+            object_updates: object_updates.unwrap_or(Vec::new()),
+            tx_disposition: tx_disposition,
+            paxos_state: paxos_state
+        }).unwrap_or(()); // Explicitly ignore any errors
+    
         request_id
     }
 
@@ -95,7 +81,7 @@ impl crate::crl::Crl for Frontend {
         store_id: store::Id,
         transaction_id: transaction::Id
     ) {
-        self.sender.send(Message::DropTransactionData{
+        self.sender.send(Request::DropTransactionData{
             store_id: store_id,
             transaction_id: transaction_id,
         }).unwrap_or(()); // Explicitly ignore any errors
@@ -106,7 +92,7 @@ impl crate::crl::Crl for Frontend {
         store_id: store::Id,
         transaction_id: transaction::Id
     ) {
-        self.sender.send(Message::DeleteTransactionState{
+        self.sender.send(Request::DeleteTransactionState{
             store_id: store_id,
             transaction_id: transaction_id,
         }).unwrap_or(()); // Explicitly ignore any errors
@@ -126,9 +112,8 @@ impl crate::crl::Crl for Frontend {
         serialized_revision_guard: ArcDataSlice
     ) -> RequestId {
         let request_id = self.next_request();
-        self.sender.send(Message::SaveAllocationState{
-            client_id: self.client_id,
-            request_id: request_id,
+        self.sender.send(Request::SaveAllocationState{
+            client_request: ClientRequest(self.client_id, request_id),
             state: AllocationRecoveryState {
                 store_id: store_id,
                 store_pointer: store_pointer,
@@ -149,7 +134,7 @@ impl crate::crl::Crl for Frontend {
         &self,
         store_id: store::Id, 
         allocation_transaction_id: transaction::Id) {
-        self.sender.send(Message::DeleteAllocationState{
+        self.sender.send(Request::DeleteAllocationState{
             store_id: store_id,
             allocation_transaction_id: allocation_transaction_id
         }).unwrap_or(()); // Explicitly ignore any errors

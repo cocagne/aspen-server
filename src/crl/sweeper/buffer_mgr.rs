@@ -13,8 +13,8 @@ pub(super) struct BufferManager {
 
 impl BufferManager {
 
-    pub(super) fn new<T: Stream>(
-        streams: &Vec<T>, 
+    pub(super) fn new(
+        streams: &Vec<Box<dyn FileStream>>, 
         entry_window_size: usize,
         recovered_transactions: &Vec<RecoveredTx>,
         recovered_allocations: &Vec<RecoveredAlloc>) -> BufferManager {
@@ -234,7 +234,7 @@ impl BufferManager {
         }
     }
 
-    pub fn log_entry<T: Stream>(&mut self, stream: &T) {
+    pub fn log_entry(&mut self, stream: &FileStream) {
         
         std::mem::swap(&mut self.processing_buffer, &mut self.current_buffer);
         

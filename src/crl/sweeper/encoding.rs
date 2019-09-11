@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn log_entry<T: Stream>(
+pub(super) fn log_entry(
     entry_serial_number: LogEntrySerialNumber,
     earliest_entry_needed: LogEntrySerialNumber,
     last_entry_location: FileLocation,
@@ -8,7 +8,7 @@ pub(super) fn log_entry<T: Stream>(
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
     alloc_deletions: &Vec<TxId>,
-    stream: &T) -> (Option<FileId>, FileLocation) {
+    stream: &Box<dyn FileStream>) -> (Option<FileId>, FileLocation) {
 
     let mut prune_file_from_log: Option<FileId> = None;
 
@@ -16,7 +16,9 @@ pub(super) fn log_entry<T: Stream>(
         tx_deletions, alloc_deletions);
 
     let (file_id, file_uuid, initial_offset, padding_sz) = {
-        let (file_id, file_uuid, offset, max_size) = stream.status();
+        let max_size = stream.const_max_file_size();
+
+        let (file_id, file_uuid, offset) = stream.status();
 
         let padding = pad_to_4k_alignment(offset, data_sz, tail_sz);
 
@@ -26,7 +28,7 @@ pub(super) fn log_entry<T: Stream>(
         else {
             prune_file_from_log = stream.rotate_files();
 
-            let (file_id, file_uuid, offset, _) = stream.status();
+            let (file_id, file_uuid, offset) = stream.status();
 
             (file_id, file_uuid, offset, padding)
         }
@@ -443,7 +445,44 @@ fn calculate_write_size(
     (data, tail, buffer_count)
 }
 
-fn pad_to_4k_alignment(offset: u64, data_size: u64, tail_size: u64) -> u64 {
+pub(super) fn tx_write_size(tx: &RefCell<Tx>) -> usize {
+    let data = 0;
+    let update_count = 0;
+    let tx = tx.borrow();
+    if tx.txd_location.is_none() {
+        data += tx.state.serialized_transaction_description.len();
+    }
+    if tx.data_locations.is_none() && ! tx.state.object_updates.is_empty() {
+        for ou in &tx.state.object_updates {
+            data += ou.data.len();
+            update_count += 1;
+        }
+    }
+    data + STATIC_TX_SIZE as usize + update_count * (16 + FILE_LOCATION_SIZE as usize)
+}
+
+pub(super) fn tx_delete_size(txid: &TxId) -> usize {
+    TXID_SIZE as usize
+}
+
+pub(super) fn alloc_write_size(alloc: &RefCell<Alloc>) -> usize {
+    let data = 0;
+    let a = alloc.borrow();
+
+    if a.data_location.is_none() {
+        data += a.state.data.len();
+    }
+    data += a.state.store_pointer.len();
+    data += a.state.serialized_revision_guard.len();
+
+    data + STATIC_ARS_SIZE as usize
+}
+
+pub(super) fn alloc_delete_size(txid: &TxId) -> usize {
+    TXID_SIZE as usize
+}
+
+pub(super) fn pad_to_4k_alignment(offset: u64, data_size: u64, tail_size: u64) -> u64 {
     let base = offset + data_size + tail_size;
     if base < 4096 {
         4096 - base

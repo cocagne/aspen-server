@@ -37,16 +37,16 @@ pub struct RequestId(u64);
 /// to send the completion notice back to the thread that originated the request. A
 /// trait object is used rather than doing this directly to allow for flexibility in
 /// the message type sent over the channel
-pub trait SaveCompleteHandler {
+pub trait RequestCompletionHandler {
     fn transaction_state_saved(&self, request_id: RequestId);
     fn allocation_state_saved(&self, request_id: RequestId);
 }
 
 /// Factory interface for Crl creation
 pub trait InterfaceFactory {
-    /// Creates a new Crl trait object that will notify the supplied SaveCompleteHandler
+    /// Creates a new Crl trait object that will notify the supplied RequestCompletionHandler
     /// when requests complete
-    fn new(&self, save_handler: Box<dyn SaveCompleteHandler>) -> Box<dyn Crl>;
+    fn new(&self, save_handler: Box<dyn RequestCompletionHandler>) -> Box<dyn Crl>;
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash
@@ -102,7 +102,7 @@ pub trait Crl {
         &mut self,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: Option<ArcData>,
+        serialized_transaction_description: ArcData,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState

@@ -23,6 +23,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+use crossbeam::crossbeam_channel;
+
 use crate::{ArcData, ArcDataSlice, Data, DataMut, DataReader};
 use crate::hlc;
 use crate::object;
@@ -30,15 +32,15 @@ use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
-use super::{DecodeError, RequestId, SaveCompleteHandler};
+use super::{DecodeError, RequestId, RequestCompletionHandler};
 
-pub(crate) mod stream;
+pub(crate) mod backend;
 pub(crate) mod buffer_mgr;
 pub(crate) mod encoding;
+pub(crate) mod file_stream;
 pub(crate) mod frontend;
-pub(crate) mod backend;
 
-pub(self) use self::stream::Stream;
+pub(self) use self::file_stream::FileStream;
 
 /// store::Id + UUID
 const TXID_SIZE: u64 = 17 + 16;
@@ -218,7 +220,7 @@ pub(self) struct RecoveredAlloc {
     last_entry_serial: LogEntrySerialNumber
 }
 
-pub(self) struct EntryBuffer {
+pub(self) struct EntryContent {
     requests: Vec<super::RequestId>,
     tx_set: HashSet<TxId>,
     tx_deletions: Vec<TxId>,
@@ -226,9 +228,9 @@ pub(self) struct EntryBuffer {
     alloc_deletions: Vec<TxId>
 }
 
-impl EntryBuffer {
-    fn new() -> EntryBuffer {
-        EntryBuffer {
+impl EntryContent {
+    fn new() -> EntryContent {
+        EntryContent {
             requests: Vec::new(),
             tx_set: HashSet::new(),
             tx_deletions: Vec::new(),
@@ -269,7 +271,7 @@ impl EntryBuffer {
 }
 
 #[derive(Clone, Copy)]
-pub(self) struct ClientId(u32);
+pub(self) struct ClientId(usize);
 
 pub(self) struct FullStateResponse(
     Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>);
@@ -278,23 +280,15 @@ pub(self) struct RegisterClientResponse {
         client_id: ClientId
 }
 
-pub(self) enum Message {
-    AddTransactionState {
-        client_id: ClientId,
-        request_id: RequestId,
+pub(self) struct ClientRequest(ClientId, RequestId);
+
+pub(self) enum Request {
+    SaveTransactionState {
+        client_request: ClientRequest,
         store_id: store::Id,
         transaction_id: transaction::Id,
         serialized_transaction_description: ArcData,
         object_updates: Vec<transaction::ObjectUpdate>,
-        tx_disposition: transaction::Disposition,
-        paxos_state: paxos::PersistentState
-    },
-    UpdateTransactionState {
-        client_id: ClientId,
-        request_id: RequestId,
-        store_id: store::Id,
-        transaction_id: transaction::Id,
-        object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState
     },
@@ -307,8 +301,7 @@ pub(self) enum Message {
         transaction_id: transaction::Id,
     },
     SaveAllocationState {
-        client_id: ClientId,
-        request_id: RequestId,
+        client_request: ClientRequest,
         state: AllocationRecoveryState
     },
     DeleteAllocationState {
@@ -317,11 +310,11 @@ pub(self) enum Message {
     },
     GetFullRecoveryState {
         store_id: store::Id,
-        sender: std::sync::mpsc::Sender<FullStateResponse>
+        sender: crossbeam_channel::Sender<FullStateResponse>
     },
     RegisterClientRequest {
-        sender: std::sync::mpsc::Sender<RegisterClientResponse>,
-        handler: Box<dyn SaveCompleteHandler>
+        sender: crossbeam_channel::Sender<RegisterClientResponse>,
+        handler: Box<dyn RequestCompletionHandler>
     },
     
 }
