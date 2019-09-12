@@ -8,7 +8,7 @@ pub(super) fn log_entry(
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
     alloc_deletions: &Vec<TxId>,
-    stream: &Box<dyn FileStream>) -> (Option<FileId>, FileLocation) {
+    stream: &Box<dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
 
     let mut prune_file_from_log: Option<FileId> = None;
 
@@ -20,21 +20,14 @@ pub(super) fn log_entry(
 
         let (file_id, file_uuid, offset) = stream.status();
 
-        let padding = pad_to_4k_alignment(offset, data_sz, tail_sz);
+        let padding = pad_to_4k_alignment(offset as u64, data_sz, tail_sz);
 
-        if offset + data_sz + padding + tail_sz <= max_size {
-            (file_id, file_uuid, offset, padding)
-        }
-        else {
-            prune_file_from_log = stream.rotate_files();
+        assert!(offset as u64 + data_sz + padding + tail_sz <= max_size as u64);
 
-            let (file_id, file_uuid, offset) = stream.status();
-
-            (file_id, file_uuid, offset, padding)
-        }
+        (file_id, file_uuid, offset, padding)
     };
 
-    let entry_offset = initial_offset + data_sz + padding_sz;
+    let entry_offset = initial_offset as u64 + data_sz + padding_sz;
 
     let mut offset = initial_offset;
 
@@ -46,9 +39,9 @@ pub(super) fn log_entry(
 
     let mut push_data_buffer = |b: ArcDataSlice| -> FileLocation {
         let length = b.len();
-        let l = FileLocation{file_id : file_id, offset : offset, length : length as u32};
+        let l = FileLocation{file_id : file_id, offset : offset as u64, length : length as u32};
         buffers.push(b);
-        offset += length as u64;
+        offset += length;
         l
     };
 
@@ -101,7 +94,7 @@ pub(super) fn log_entry(
 
     assert_eq!((tail.capacity() - tail.len()) as u64, STATIC_ENTRY_SIZE);
 
-    let entry_block_offset = initial_offset + data_sz + tail.offset() as u64;
+    let entry_block_offset = initial_offset as u64 + data_sz + tail.offset() as u64;
 
     // Entry block always ends with:
     //   entry_serial_number - 8
@@ -125,15 +118,13 @@ pub(super) fn log_entry(
 
     buffers.push(ArcDataSlice::from(tail.finalize()));
 
-    stream.write(buffers, entry_serial_number);
-
     let entry_location = FileLocation{
         file_id : file_id, 
         offset : entry_block_offset, 
         length : STATIC_ENTRY_SIZE as u32
     };
 
-    (prune_file_from_log, entry_location)
+    (entry_location, buffers)
 }
 
 // pub struct TransactionRecoveryState {
@@ -446,8 +437,8 @@ fn calculate_write_size(
 }
 
 pub(super) fn tx_write_size(tx: &RefCell<Tx>) -> usize {
-    let data = 0;
-    let update_count = 0;
+    let mut data = 0;
+    let mut update_count = 0;
     let tx = tx.borrow();
     if tx.txd_location.is_none() {
         data += tx.state.serialized_transaction_description.len();
@@ -466,7 +457,7 @@ pub(super) fn tx_delete_size(txid: &TxId) -> usize {
 }
 
 pub(super) fn alloc_write_size(alloc: &RefCell<Alloc>) -> usize {
-    let data = 0;
+    let mut data = 0;
     let a = alloc.borrow();
 
     if a.data_location.is_none() {

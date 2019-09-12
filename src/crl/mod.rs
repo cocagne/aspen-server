@@ -8,6 +8,8 @@
 //! CRL implementations and the back end is abstracted away behind a std::async::mpsc::Sender
 //! interface.
 
+use std::sync;
+
 use super::{ ArcData, ArcDataSlice };
 use super::hlc;
 use super::object;
@@ -46,7 +48,7 @@ pub trait RequestCompletionHandler {
 pub trait InterfaceFactory {
     /// Creates a new Crl trait object that will notify the supplied RequestCompletionHandler
     /// when requests complete
-    fn new(&self, save_handler: Box<dyn RequestCompletionHandler>) -> Box<dyn Crl>;
+    fn new(&self, save_handler: sync::Arc<dyn RequestCompletionHandler>) -> Box<dyn Crl>;
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash

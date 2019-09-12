@@ -18,7 +18,10 @@ pub(self) struct LogState {
     last_entry_location: FileLocation,
     earliest_entry_needed: LogEntrySerialNumber,
 
-    completion_handlers: Vec<Box<dyn RequestCompletionHandler>>,
+    completion_handlers: Vec<Arc<dyn RequestCompletionHandler>>,
+    last_notified_serial: LogEntrySerialNumber,
+
+    pending_completions: HashMap<LogEntrySerialNumber, Vec<Completion>>,
 
     /// Channels do not have a peek option so if we cannot add a request to the current entry
     /// it will be placed here for the next entry to consume
@@ -92,6 +95,8 @@ impl LogState {
             last_entry_location: last_entry_location,
             earliest_entry_needed,
             completion_handlers: Vec::new(),
+            pending_completions: HashMap::new(),
+            last_notified_serial: last_entry_serial,
             next_request: None
         }))
     }
@@ -113,7 +118,7 @@ impl LogState {
                         add_it = true;    
                     } 
 
-                    if let Some(locations) = mtx.data_locations {
+                    if let Some(locations) = &mtx.data_locations {
                         for l in locations {
                             if l.file_id == file_id {
                                 mtx.data_locations = None;
@@ -160,7 +165,7 @@ impl LogState {
         Ok(())
     }
     
-    fn add_request(&self, 
+    fn add_request(&mut self, 
         entry: &mut Entry, 
         request: &Request) -> RequestResult {
         
@@ -181,7 +186,7 @@ impl LogState {
 
                 match self.transactions.get(&txid) {
                     Some(tx) => {
-                        let mtx = tx.borrow_mut();
+                        let mut mtx = tx.borrow_mut();
 
                         if mtx.state.object_updates.len() == 0 && object_updates.len() != 0 {
                             mtx.state.object_updates = object_updates.clone();
@@ -192,7 +197,7 @@ impl LogState {
 
                         drop(mtx);
 
-                        match entry.add_transaction(&txid, &tx, Some(*client_request)) {
+                        match entry.add_transaction(&txid, &tx, Some(client_request)) {
                             Ok(_) => RequestResult::Okay,
                             Err(_) => RequestResult::EntryIsFull
                         }
@@ -212,7 +217,7 @@ impl LogState {
                             last_entry_serial: self.next_entry_serial
                         });
 
-                        match entry.add_transaction(&txid, &tx, Some(*client_request)) {
+                        match entry.add_transaction(&txid, &tx, Some(client_request)) {
                             Ok(_) => {
                                 self.transactions.insert(txid, tx);
                                 RequestResult::Okay
@@ -228,7 +233,7 @@ impl LogState {
             } => {
                 let txid = TxId(*store_id, *transaction_id);
                 if let Some(tx) = self.transactions.get(&txid) {
-                    let mtx = tx.borrow_mut();
+                    let mut mtx = tx.borrow_mut();
                     mtx.data_locations = None;
                     mtx.state.object_updates.clear();
                 };
@@ -257,7 +262,7 @@ impl LogState {
                     last_entry_serial: self.next_entry_serial
                 });
                 let txid = TxId(state.store_id, state.allocation_transaction_id);
-                match entry.add_allocation(&txid, &a, Some(*client_request)) {
+                match entry.add_allocation(&txid, &a, Some(client_request)) {
                     Ok(_) => {
                         self.allocations.insert(txid, a);
                         RequestResult::Okay
@@ -285,14 +290,14 @@ impl LogState {
                 let mut txs: Vec<TransactionRecoveryState> = Vec::new();
                 let mut allocs:  Vec<AllocationRecoveryState> = Vec::new();
 
-                for (_, tx) in self.transactions {
+                for (_, tx) in &self.transactions {
                     let tx = tx.borrow();
                     if tx.state.store_id == *store_id {
                         txs.push(tx.state.clone());
                     }
                 }
 
-                for (_, a) in self.allocations {
+                for (_, a) in &self.allocations {
                     let a = a.borrow();
                     if a.state.store_id == *store_id {
                         allocs.push(a.state.clone());
@@ -307,11 +312,80 @@ impl LogState {
                 handler
             } => {
                 let client_id = ClientId(self.completion_handlers.len());
-                self.completion_handlers.push(*handler);
+                self.completion_handlers.push(handler.clone());
                 sender.send(RegisterClientResponse { client_id });
                 RequestResult::Okay
             }
         }
+    }
+
+    /// Moves transactions and allocation descriptions behind the entry window size into
+    /// the current entry. The goal here is to restrict the number of entries that must be
+    /// read during crash recovery. Returns true if all necessary entries have been migrated
+    /// forwad. False otherwise.
+    fn migrate_earliest_entry(&mut self, entry: &mut Entry) -> bool {
+    
+        // If this entry falls on a window-size boundary, put all transactions and allocations
+        // written behind the window-size into the entry buffer
+        if self.next_entry_serial.0 % self.entry_window_size as u64 != 0 {
+            true // nothing to do
+        } else {
+            let earliest = self.next_entry_serial.0 as u64 - self.entry_window_size as u64;
+            let earliest = LogEntrySerialNumber(earliest);
+
+            for (txid, tx) in &self.transactions {
+                if tx.borrow().last_entry_serial < earliest {
+                    match entry.add_transaction(txid, tx, None) {
+                        Ok(_) => (),
+                        Err(_) => return false
+                    }
+                }
+            }
+            for (txid, a) in &self.allocations {
+                if a.borrow().last_entry_serial < earliest {
+                     match entry.add_allocation(txid, a, None) {
+                        Ok(_) => (),
+                        Err(_) => return false
+                    }
+                }
+            }
+
+            self.earliest_entry_needed = earliest;
+
+            true
+        } 
+    }
+
+    /// Creates the log entry and returns it as a vector of ArcDataSlice.
+    /// 
+    /// Returns: (Optional EntrySerialNumber, FileLocation of this entry, entry data to be passed to the stream)
+    pub fn create_log_entry(&mut self, 
+        entry: &mut Entry,
+        stream: &Box<dyn FileStream>) -> (LogEntrySerialNumber, Vec::<ArcDataSlice>) {
+        
+        let mut txs: Vec<&RefCell<Tx>> = Vec::new();
+        let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
+
+        for txid in &entry.tx_set {
+            self.transactions.get(&txid).map( |tx| txs.push(tx) );
+        }
+
+        for txid in &entry.allocs {
+            self.allocations.get(&txid).map( |a| allocs.push(a) );
+        }
+
+        let entry_serial = self.next_entry_serial;
+
+        let (entry_location, buffers) = encoding::log_entry(
+            entry_serial, self.earliest_entry_needed, self.last_entry_location,
+            &txs, &allocs,
+            &entry.tx_deletions, &entry.alloc_deletions, stream
+        );
+
+        self.last_entry_location = entry_location;
+        self.next_entry_serial = self.next_entry_serial.next();
+        
+        (entry_serial, buffers)
     }
 }
 
@@ -363,11 +437,10 @@ impl Backend {
 
         'top_level: loop {
             
-            let (file_id, file_uuid, base_offset) = stream.status();
+            entry.reset(&stream);
 
-            entry.reset(base_offset);
-
-            { // Lock Log State Mutex
+            let (prune_required, entry_serial, buffers) = { 
+                // ---------- Lock Log State Mutex ----------
 
                 let mut state = self.log_state.lock().unwrap(); // Panic if lock fails
 
@@ -388,14 +461,18 @@ impl Backend {
                     }
                 };
 
-                if pruned {
+                let migrated = pruned && state.migrate_earliest_entry(&mut entry);
+
+                if pruned && migrated {
                     // If the last entry wasn't able to process all entries it read from the
                     // channel, it will have left the last entry it read in the next_request field
                     // of the log state object. Handle that before reading new entries
-                    if let Some(request) = &state.next_request {
-                        match state.add_request(&mut entry, request) {
-                            RequestResult::Okay => state.next_request = None,
-                            RequestResult::EntryIsFull => ()
+                    if ! state.next_request.is_none() {
+                        if let Some(request) = state.next_request.clone() {
+                            match state.add_request(&mut entry, &request) {
+                                RequestResult::Okay => state.next_request = None,
+                                RequestResult::EntryIsFull => ()
+                            }
                         }
                     }
 
@@ -404,29 +481,17 @@ impl Backend {
                     // the channel until the entry is full or we need to do a blocking read.
                     if state.next_request.is_none() {
 
-                        enum Next {
-                            Continue,
-                            Break
-                        }
-
-                        let process = |request: Request| -> Next {
-                            match state.add_request(&mut entry, &request) {
-                                RequestResult::Okay => Next::Continue,
-                                RequestResult::EntryIsFull => {
-                                    state.next_request = Some(request);
-                                    Next::Break
-                                }
-                            }
-                        };
-
                         'read_loop: loop {
 
                             match state.receiver.try_recv() {
                                 Ok(request) => {
-                                    match process(request) {
-                                        Next::Continue => (),
-                                        Next::Break => break 'read_loop
-                                    }
+                                    match state.add_request(&mut entry, &request) {
+                                        RequestResult::Okay => (),
+                                        RequestResult::EntryIsFull => {
+                                            state.next_request = Some(request);
+                                            break 'read_loop;
+                                        }
+                                    };
                                 },
                                 Err(e) => {
                                     match e {
@@ -449,10 +514,13 @@ impl Backend {
                                                     Err(e) => break 'top_level,
 
                                                     Ok(request) => {
-                                                        match process(request) {
-                                                            Next::Continue => (),
-                                                            Next::Break => break 'read_loop
-                                                        }
+                                                        match state.add_request(&mut entry, &request) {
+                                                            RequestResult::Okay => (),
+                                                            RequestResult::EntryIsFull => {
+                                                                state.next_request = Some(request);
+                                                                break 'read_loop;
+                                                            }
+                                                        };
                                                     }
                                                 }
                                             }
@@ -464,28 +532,70 @@ impl Backend {
                     }
                 }
 
-                // Create the buffers vector for writing
+                let (entry_serial, buffers) = state.create_log_entry(&mut entry, &stream);
 
-            } // Drop Log State Mutex 
+                let prune_required = ! state.next_request.is_none();
 
-            // do write
+                
 
+                (prune_required, entry_serial, buffers)
+            }; // ---------- Unlock Log State Mutex ----------
+
+            // Blocking Write
+            stream.write(buffers, entry_serial);
+
+            if prune_required || entry.is_empty() {
+                prune_file = stream.rotate_files();
+            }
             
-            // Run callback handlers
+            { // ---------- Lock Log State Mutex ----------
+                let mut state = self.log_state.lock().unwrap(); // Panic if lock fails
+
+                if entry_serial == state.last_notified_serial.next() {
+                    // Run completion handlers for this entry
+                    for cr in &entry.requests {
+                        match cr {
+                            Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(*request_id),
+                            Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(*request_id)
+                        }
+                    }
+
+                    state.last_notified_serial = entry_serial;
+
+                    // Run completion handlers for further entries that have completed
+                    loop {
+                        let next = state.last_notified_serial.next();
+
+                        match state.pending_completions.remove(&next) {
+                            None => break,
+                            Some(v) => {
+                                for cr in v {
+                                    match cr {
+                                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(request_id),
+                                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(request_id)
+                                    }
+                                }
+                                state.last_notified_serial = next;
+                            }
+                        }
+                    }
+                } else {
+                    state.pending_completions.insert(entry_serial, entry.requests.clone());
+                }
+                
+            } // ---------- Unlock Log State Mutex ----------
         }
     }
-
-
-
-    
 }
 
-
-
-
+#[derive(Copy, Clone)]
+enum Completion {
+    TxSave(ClientId, RequestId),
+    AllocSave(ClientId, RequestId)
+}
 
 struct Entry {
-    requests: Vec<ClientRequest>,
+    requests: Vec<Completion>,
     tx_set: HashSet<TxId>,
     tx_deletions: Vec<TxId>,
     allocs: Vec<TxId>,
@@ -515,14 +625,15 @@ impl Entry {
         }
     }
 
-    fn reset(&mut self, base_offset: usize) {
+    fn reset(&mut self, stream: &Box<dyn FileStream>) {
         self.requests.clear();
         self.tx_set.clear();
         self.tx_deletions.clear();
         self.allocs.clear();
         self.alloc_deletions.clear();
         self.size = 0;
-        self.offset = base_offset;
+        let (_, _, file_offset) = stream.status();
+        self.offset = file_offset;
     }
 
     fn is_empty(&self) -> bool {
@@ -535,10 +646,10 @@ impl Entry {
     fn add_transaction(&mut self, 
         tx_id: &TxId, 
         tx: &RefCell<Tx>,
-        req: Option<ClientRequest>) -> Result<(), EntryFull> {
+        req: Option<&ClientRequest>) -> Result<(), EntryFull> {
         if self.tx_set.contains(tx_id) {
             if let Some(cr) = req {
-                self.requests.push(cr);
+                self.requests.push(Completion::TxSave(cr.0, cr.1));
             }
             return Ok(());
         } else {
@@ -550,7 +661,7 @@ impl Entry {
                 self.tx_set.insert(tx_id.clone());
                 self.size += esize;
                 if let Some(cr) = req {
-                    self.requests.push(cr);
+                    self.requests.push(Completion::TxSave(cr.0, cr.1));
                 }
                 return Ok(());
             }
@@ -560,7 +671,7 @@ impl Entry {
     fn add_allocation(&mut self, 
         tx_id: &TxId, 
         alloc: &RefCell<Alloc>,
-        req: Option<ClientRequest>) -> Result<(), EntryFull> {
+        req: Option<&ClientRequest>) -> Result<(), EntryFull> {
         let asize = encoding::alloc_write_size(alloc);
         if self.size + asize > self.max_size {
             return Err(EntryFull{});
@@ -568,7 +679,7 @@ impl Entry {
             self.allocs.push(tx_id.clone());
             self.size += asize;
             if let Some(cr) = req {
-                self.requests.push(cr);
+                self.requests.push(Completion::AllocSave(cr.0, cr.1));
             }
             return Ok(());
         }

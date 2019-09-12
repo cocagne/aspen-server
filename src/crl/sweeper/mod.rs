@@ -22,6 +22,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync;
 
 use crossbeam::crossbeam_channel;
 
@@ -35,7 +36,6 @@ use super::{TransactionRecoveryState, AllocationRecoveryState};
 use super::{DecodeError, RequestId, RequestCompletionHandler};
 
 pub(crate) mod backend;
-pub(crate) mod buffer_mgr;
 pub(crate) mod encoding;
 pub(crate) mod file_stream;
 pub(crate) mod frontend;
@@ -90,7 +90,7 @@ const STATIC_ARS_SIZE: u64 = 17 + 16 + 4 + 16 + 1 + 4 + 14 + 8 + 8 + 4;
 pub(self) struct LogEntrySerialNumber(u64);
 
 impl LogEntrySerialNumber {
-    pub(crate) fn next(self) -> LogEntrySerialNumber {
+    pub(crate) fn next(&self) -> LogEntrySerialNumber {
         LogEntrySerialNumber( self.0 + 1 )
     }
 }
@@ -280,8 +280,10 @@ pub(self) struct RegisterClientResponse {
         client_id: ClientId
 }
 
+#[derive(Clone, Copy)]
 pub(self) struct ClientRequest(ClientId, RequestId);
 
+#[derive(Clone)]
 pub(self) enum Request {
     SaveTransactionState {
         client_request: ClientRequest,
@@ -314,7 +316,7 @@ pub(self) enum Request {
     },
     RegisterClientRequest {
         sender: crossbeam_channel::Sender<RegisterClientResponse>,
-        handler: Box<dyn RequestCompletionHandler>
+        handler: sync::Arc<dyn RequestCompletionHandler>
     },
     
 }
