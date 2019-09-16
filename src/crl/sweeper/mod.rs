@@ -36,11 +36,17 @@ use super::{TransactionRecoveryState, AllocationRecoveryState};
 use super::{DecodeError, RequestId, RequestCompletionHandler};
 
 pub(crate) mod backend;
+pub(crate) mod dio_gather;
 pub(crate) mod encoding;
 pub(crate) mod file_stream;
 pub(crate) mod frontend;
+pub(crate) mod log_file;
 
 pub(self) use self::file_stream::FileStream;
+
+pub fn placeholder_new() {
+    backend::Backend::placeholder_new(0);
+}
 
 /// store::Id + UUID
 const TXID_SIZE: u64 = 17 + 16;
@@ -218,6 +224,21 @@ pub(self) struct RecoveredAlloc {
     timestamp: hlc::Timestamp,
     serialized_revision_guard: ArcDataSlice,
     last_entry_serial: LogEntrySerialNumber
+}
+
+pub(self) struct RecoveringEntry {
+    serial: LogEntrySerialNumber,
+    entry_offset: u64,
+    earliest_needed: u64,
+    num_tx: u32,
+    num_allocs: u32,
+    num_tx_del: u32,
+    num_alloc_del: u32,
+    previous_entry_location: FileLocation,
+    transactions: Vec<RecoveringTx>,
+    allocations: Vec<RecoveringAlloc>,
+    tx_deletions: Vec<TxId>,
+    alloc_deletions: Vec<TxId>
 }
 
 pub(self) struct EntryContent {

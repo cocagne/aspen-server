@@ -361,7 +361,7 @@ impl LogState {
     /// Returns: (Optional EntrySerialNumber, FileLocation of this entry, entry data to be passed to the stream)
     pub fn create_log_entry(&mut self, 
         entry: &mut Entry,
-        stream: &Box<dyn FileStream>) -> (LogEntrySerialNumber, Vec::<ArcDataSlice>) {
+        stream: &Box<&mut dyn FileStream>) -> (LogEntrySerialNumber, Vec::<ArcDataSlice>) {
         
         let mut txs: Vec<&RefCell<Tx>> = Vec::new();
         let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
@@ -395,24 +395,53 @@ enum RequestResult {
     EntryIsFull
 }
 
-struct Backend {
+pub struct Backend {
+    backend: BackendImpl
+}
+
+impl Backend {
+    pub fn placeholder_new(
+        //streams: Vec<Box<dyn FileStream>>,
+        entry_window_size: usize, // ensures we never need to read more than window_size entries during recovery
+        // recovered_transactions: &Vec<RecoveredTx>,
+        // recovered_allocations: &Vec<RecoveredAlloc>,
+        //last_entry_serial: LogEntrySerialNumber,
+        //last_entry_location: FileLocation
+        ) -> Backend {
+            let streams = Vec::new();
+            let recovered_transactions = Vec::new();
+            let recovered_allocations = Vec::new();
+            let last_entry_serial = LogEntrySerialNumber(0);
+            let last_entry_location = FileLocation {
+                file_id: FileId(0),
+                offset: 0,
+                length: 0
+            };
+            Backend {
+                backend: BackendImpl::new(streams, entry_window_size, &recovered_transactions,
+                  &recovered_allocations, last_entry_serial, last_entry_location)
+            }
+        }
+}
+
+struct BackendImpl {
     log_state: Arc<Mutex<LogState>>,
     streams: Vec<Box<dyn FileStream>>,
     pub sender: crossbeam_channel::Sender<Request>,
 }
 
-impl Backend {
+impl BackendImpl {
     pub fn new(
         streams: Vec<Box<dyn FileStream>>,
         entry_window_size: usize, // ensures we never need to read more than window_size entries during recovery
         recovered_transactions: &Vec<RecoveredTx>,
         recovered_allocations: &Vec<RecoveredAlloc>,
         last_entry_serial: LogEntrySerialNumber,
-        last_entry_location: FileLocation) -> Backend
+        last_entry_location: FileLocation) -> BackendImpl
     {
         let (sender, receiver) = crossbeam_channel::unbounded();
 
-        let backend = Backend {
+        let backend = BackendImpl {
             log_state: LogState::new(
                     receiver, entry_window_size, 
                     recovered_transactions, recovered_allocations, 
@@ -428,7 +457,7 @@ impl Backend {
         self.sender.clone()
     }
 
-    fn io_thread(&self, stream: Box<dyn FileStream>) {
+    fn io_thread(&self, stream: Box<&mut dyn FileStream>) {
         
         let max_file_size = stream.const_max_file_size();
 
@@ -625,7 +654,7 @@ impl Entry {
         }
     }
 
-    fn reset(&mut self, stream: &Box<dyn FileStream>) {
+    fn reset(&mut self, stream: &Box<&mut dyn FileStream>) {
         self.requests.clear();
         self.tx_set.clear();
         self.tx_deletions.clear();

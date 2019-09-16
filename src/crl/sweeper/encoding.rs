@@ -8,7 +8,7 @@ pub(super) fn log_entry(
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
     alloc_deletions: &Vec<TxId>,
-    stream: &Box<dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
+    stream: &Box<&mut dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
 
     let mut prune_file_from_log: Option<FileId> = None;
 

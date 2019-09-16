@@ -19,9 +19,9 @@ pub(super) trait FileStream {
     /// Writes the provided data to the file provided by status()
     /// 
     /// Currently this method must always be able to write data of the maximum-possible size.
-    fn write(&self, data: Vec<ArcDataSlice>, entry_serial_number: LogEntrySerialNumber);
+    fn write(&mut self, data: Vec<ArcDataSlice>, entry_serial_number: LogEntrySerialNumber);
 
     /// Rotates the underlying files and optionally returns a FileId
     /// to prune entries from
-    fn rotate_files(&self) -> Option<FileId>;
+    fn rotate_files(&mut self) -> Option<FileId>;
 }
