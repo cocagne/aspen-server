@@ -1,5 +1,6 @@
 
 use std::sync::{Mutex, Arc};
+use std::thread;
 
 use crossbeam::crossbeam_channel;
 use crossbeam::crossbeam_channel::TryRecvError;
@@ -396,165 +397,154 @@ enum RequestResult {
     EntryIsFull
 }
 
-pub struct Backend {
-    backend: BackendImpl
+pub(super) struct Backend {
+    log_state: Arc<Mutex<LogState>>,
+    io_threads: Vec<thread::JoinHandle<()>>,
+    pub sender: crossbeam_channel::Sender<Request>
 }
 
 impl Backend {
     pub fn recover(
         crl_directory: &Path, 
-        entry_window_size: usize
+        entry_window_size: usize,
+        num_streams: usize
         ) -> Result<Backend, std::io::Error> {
             
-            let mut r = log_file::recover(crl_directory, entry_window_size)?;
-            
-            let mut streams = Vec::new();
+        let mut r = log_file::recover(crl_directory, entry_window_size, num_streams)?;
+        
+        
 
-            assert!(r.log_files.len() % 3 == 0);
+        assert!(r.log_files.len() % 3 == 0);
 
-            while r.log_files.len() > 0 {
-
-                let f3 = r.log_files.pop().unwrap();
-                let f2 = r.log_files.pop().unwrap();
-                let f1 = r.log_files.pop().unwrap();
-
-                streams.push(tri_file_stream::TriFileStream::new(f1, f2, f3));
-            }
-            
-            Ok(Backend {
-                backend: BackendImpl::new(streams, entry_window_size, &r.transactions,
-                  &r.allocations, r.last_entry_serial, r.last_entry_location)
-            })
-        }
-}
-
-struct BackendImpl {
-    log_state: Arc<Mutex<LogState>>,
-    streams: Vec<Box<dyn FileStream>>,
-    pub sender: crossbeam_channel::Sender<Request>,
-}
-
-impl BackendImpl {
-    pub fn new(
-        streams: Vec<Box<dyn FileStream>>,
-        entry_window_size: usize, // ensures we never need to read more than window_size entries during recovery
-        recovered_transactions: &Vec<RecoveredTx>,
-        recovered_allocations: &Vec<RecoveredAlloc>,
-        last_entry_serial: LogEntrySerialNumber,
-        last_entry_location: FileLocation) -> BackendImpl
-    {
         let (sender, receiver) = crossbeam_channel::unbounded();
-
-        let backend = BackendImpl {
-            log_state: LogState::new(
+        let log_state = LogState::new(
                     receiver, entry_window_size, 
-                    recovered_transactions, recovered_allocations, 
-                    last_entry_serial, last_entry_location),
+                    &r.transactions, &r.allocations, 
+                    r.last_entry_serial, r.last_entry_location);
+
+        let io_threads = Vec::new();
+
+        while r.log_files.len() > 0 {
+
+            let f3 = r.log_files.pop().unwrap();
+            let f2 = r.log_files.pop().unwrap();
+            let f1 = r.log_files.pop().unwrap();
+
+            let handle = thread::spawn( move || {
+                io_thread(log_state, tri_file_stream::TriFileStream::new(f1, f2, f3));
+            });
+
+            io_threads.push(handle);
+        }
+
+
+        let be = Backend{
+            log_state ,
             streams,
             sender,
         };
 
-        backend
+        Ok(be)
     }
 
     pub(super) fn clone_sender(&self) -> crossbeam_channel::Sender<Request> {
         self.sender.clone()
     }
+}
 
-    fn io_thread(&self, stream: Box<&mut dyn FileStream>) {
+fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
         
-        let max_file_size = stream.const_max_file_size();
+    let max_file_size = stream.const_max_file_size();
 
-        let mut prune_file: Option<FileId> = None;
-        let mut entry = Entry::new(max_file_size);
+    let mut prune_file: Option<FileId> = None;
+    let mut entry = Entry::new(max_file_size);
 
-        'top_level: loop {
-            
-            entry.reset(&stream);
+    'top_level: loop {
+        
+        entry.reset(&stream);
 
-            let (prune_required, entry_serial, buffers) = { 
-                // ---------- Lock Log State Mutex ----------
+        let (prune_required, entry_serial, buffers) = { 
+            // ---------- Lock Log State Mutex ----------
 
-                let mut state = self.log_state.lock().unwrap(); // Panic if lock fails
+            let mut state = log_state.lock().unwrap(); // Panic if lock fails
 
-                // First prune all content from our to-be-pruned file, if we have a file to prune.
-                // This action alone may entirely fill the entry buffer (and may even take
-                // multiple passes).
-            
-                let pruned = match prune_file {
-                    None => true,
-                    Some(prune_id) => {
-                        match state.prune_data_stored_in_file(prune_id, &mut entry) {
-                            Ok(_) => {
-                                prune_file = None; // Prune Complete!
-                                true
+            // First prune all content from our to-be-pruned file, if we have a file to prune.
+            // This action alone may entirely fill the entry buffer (and may even take
+            // multiple passes).
+        
+            let pruned = match prune_file {
+                None => true,
+                Some(prune_id) => {
+                    match state.prune_data_stored_in_file(prune_id, &mut entry) {
+                        Ok(_) => {
+                            prune_file = None; // Prune Complete!
+                            true
+                        },
+                        Err(_) => false
+                    }
+                }
+            };
+
+            let migrated = pruned && state.migrate_earliest_entry(&mut entry);
+
+            if pruned && migrated {
+                // If the last entry wasn't able to process all entries it read from the
+                // channel, it will have left the last entry it read in the next_request field
+                // of the log state object. Handle that before reading new entries
+                if ! state.next_request.is_none() {
+                    if let Some(request) = state.next_request.clone() {
+                        match state.add_request(&mut entry, &request) {
+                            RequestResult::Okay => state.next_request = None,
+                            RequestResult::EntryIsFull => ()
+                        }
+                    }
+                }
+
+                // If we weren't able to handle the pending request, the entry must already
+                // be full so we can skip reading from the channel. Otherwise, we'll read from
+                // the channel until the entry is full or we need to do a blocking read.
+                if state.next_request.is_none() {
+
+                    'read_loop: loop {
+
+                        match state.receiver.try_recv() {
+                            Ok(request) => {
+                                match state.add_request(&mut entry, &request) {
+                                    RequestResult::Okay => (),
+                                    RequestResult::EntryIsFull => {
+                                        state.next_request = Some(request);
+                                        break 'read_loop;
+                                    }
+                                };
                             },
-                            Err(_) => false
-                        }
-                    }
-                };
+                            Err(e) => {
+                                match e {
+                                    TryRecvError::Disconnected => break 'top_level,
 
-                let migrated = pruned && state.migrate_earliest_entry(&mut entry);
+                                    TryRecvError::Empty => {
+                                        if ! entry.is_empty() {
+                                            // The channel is empty and we have content to
+                                            // write
+                                            break 'read_loop; 
+                                        } else {
+                                            // channel and entry are empty
+                                            // Block here awaiting entry content. Note that
+                                            // we're HOLDING the state mutex while blocking
+                                            // that's what we want.
+                                            match state.receiver.recv() {
+                                                // The only reason channel.recv() can error
+                                                // here is due the channel being both empty
+                                                // and broken. Terminate this IO thread.
+                                                Err(e) => break 'top_level,
 
-                if pruned && migrated {
-                    // If the last entry wasn't able to process all entries it read from the
-                    // channel, it will have left the last entry it read in the next_request field
-                    // of the log state object. Handle that before reading new entries
-                    if ! state.next_request.is_none() {
-                        if let Some(request) = state.next_request.clone() {
-                            match state.add_request(&mut entry, &request) {
-                                RequestResult::Okay => state.next_request = None,
-                                RequestResult::EntryIsFull => ()
-                            }
-                        }
-                    }
-
-                    // If we weren't able to handle the pending request, the entry must already
-                    // be full so we can skip reading from the channel. Otherwise, we'll read from
-                    // the channel until the entry is full or we need to do a blocking read.
-                    if state.next_request.is_none() {
-
-                        'read_loop: loop {
-
-                            match state.receiver.try_recv() {
-                                Ok(request) => {
-                                    match state.add_request(&mut entry, &request) {
-                                        RequestResult::Okay => (),
-                                        RequestResult::EntryIsFull => {
-                                            state.next_request = Some(request);
-                                            break 'read_loop;
-                                        }
-                                    };
-                                },
-                                Err(e) => {
-                                    match e {
-                                        TryRecvError::Disconnected => break 'top_level,
-
-                                        TryRecvError::Empty => {
-                                            if ! entry.is_empty() {
-                                                // The channel is empty and we have content to
-                                                // write
-                                                break 'read_loop; 
-                                            } else {
-                                                // channel and entry are empty
-                                                // Block here awaiting entry content. Note that
-                                                // we're HOLDING the state mutex while blocking
-                                                // that's what we want.
-                                                match state.receiver.recv() {
-                                                    // The only reason channel.recv() can error
-                                                    // here is due the channel being both empty
-                                                    // and broken. Terminate this IO thread.
-                                                    Err(e) => break 'top_level,
-
-                                                    Ok(request) => {
-                                                        match state.add_request(&mut entry, &request) {
-                                                            RequestResult::Okay => (),
-                                                            RequestResult::EntryIsFull => {
-                                                                state.next_request = Some(request);
-                                                                break 'read_loop;
-                                                            }
-                                                        };
-                                                    }
+                                                Ok(request) => {
+                                                    match state.add_request(&mut entry, &request) {
+                                                        RequestResult::Okay => (),
+                                                        RequestResult::EntryIsFull => {
+                                                            state.next_request = Some(request);
+                                                            break 'read_loop;
+                                                        }
+                                                    };
                                                 }
                                             }
                                         }
@@ -564,60 +554,60 @@ impl BackendImpl {
                         }
                     }
                 }
+            }
 
-                let (entry_serial, buffers) = state.create_log_entry(&mut entry, &stream);
+            let (entry_serial, buffers) = state.create_log_entry(&mut entry, &stream);
 
-                let prune_required = ! state.next_request.is_none();
+            let prune_required = ! state.next_request.is_none();
 
-                
+            
 
-                (prune_required, entry_serial, buffers)
-            }; // ---------- Unlock Log State Mutex ----------
+            (prune_required, entry_serial, buffers)
+        }; // ---------- Unlock Log State Mutex ----------
 
-            // Blocking Write
-            stream.write(buffers);
+        // Blocking Write
+        stream.write(buffers);
 
-            if prune_required || entry.is_empty() {
-                prune_file = stream.rotate_files();
+        if prune_required || entry.is_empty() {
+            prune_file = stream.rotate_files();
+        }
+        
+        { // ---------- Lock Log State Mutex ----------
+            let mut state = log_state.lock().unwrap(); // Panic if lock fails
+
+            if entry_serial == state.last_notified_serial.next() {
+                // Run completion handlers for this entry
+                for cr in &entry.requests {
+                    match cr {
+                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(*request_id),
+                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(*request_id)
+                    }
+                }
+
+                state.last_notified_serial = entry_serial;
+
+                // Run completion handlers for further entries that have completed
+                loop {
+                    let next = state.last_notified_serial.next();
+
+                    match state.pending_completions.remove(&next) {
+                        None => break,
+                        Some(v) => {
+                            for cr in v {
+                                match cr {
+                                    Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(request_id),
+                                    Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(request_id)
+                                }
+                            }
+                            state.last_notified_serial = next;
+                        }
+                    }
+                }
+            } else {
+                state.pending_completions.insert(entry_serial, entry.requests.clone());
             }
             
-            { // ---------- Lock Log State Mutex ----------
-                let mut state = self.log_state.lock().unwrap(); // Panic if lock fails
-
-                if entry_serial == state.last_notified_serial.next() {
-                    // Run completion handlers for this entry
-                    for cr in &entry.requests {
-                        match cr {
-                            Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(*request_id),
-                            Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(*request_id)
-                        }
-                    }
-
-                    state.last_notified_serial = entry_serial;
-
-                    // Run completion handlers for further entries that have completed
-                    loop {
-                        let next = state.last_notified_serial.next();
-
-                        match state.pending_completions.remove(&next) {
-                            None => break,
-                            Some(v) => {
-                                for cr in v {
-                                    match cr {
-                                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(request_id),
-                                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(request_id)
-                                    }
-                                }
-                                state.last_notified_serial = next;
-                            }
-                        }
-                    }
-                } else {
-                    state.pending_completions.insert(entry_serial, entry.requests.clone());
-                }
-                
-            } // ---------- Unlock Log State Mutex ----------
-        }
+        } // ---------- Unlock Log State Mutex ----------
     }
 }
 

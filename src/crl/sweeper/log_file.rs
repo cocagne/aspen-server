@@ -157,10 +157,6 @@ fn seek(fd: libc::c_int, offset: i64, whence: libc::c_int) -> Result<usize> {
     }
 }
 
-fn fdtell(fd: libc::c_int) -> Result<usize> {
-    seek(fd, 0, libc::SEEK_CUR)
-}
-
 fn find_last_valid_entry(
     fd: libc::c_int, 
     file_size: usize, 
@@ -194,20 +190,14 @@ fn find_last_valid_entry(
 
 pub(super) fn recover(
     crl_directory: &Path, 
-    max_file_size: usize) -> Result<RecoveredCrlState> {
+    max_file_size: usize,
+    num_streams: usize) -> Result<RecoveredCrlState> {
 
     let mut raw_files = Vec::<(LogFile, Option<(LogEntrySerialNumber, usize)>)>::new();
-
-    let have_file = |i| -> bool {
-        let p = crl_directory.join(format!("{}", i));
-        p.as_path().exists()
-    };
-
-    let mut i = 0;
-    while have_file(i) {
-        let f = LogFile::new(crl_directory, FileId(i), max_file_size)?;
+    
+    for i in 0 .. num_streams * 3 {
+        let f = LogFile::new(crl_directory, FileId(i as u16), max_file_size)?;
         raw_files.push(f);
-        i += 1;
     }
 
     let mut last: Option<(FileId, LogEntrySerialNumber, usize)> = None;
@@ -277,7 +267,7 @@ pub(super) fn recover(
             
             let mut entry_data = file.read(entry_data_start, entry_data_size)?;
 
-            encoding::load_entry_data(&mut entry_data, &mut entry, entry_serial);
+            encoding::load_entry_data(&mut entry_data, &mut entry, entry_serial)?;
 
             for txid in &entry.tx_deletions {
                 deleted_tx.insert(*txid);
