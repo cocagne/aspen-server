@@ -8,6 +8,8 @@
 //! CRL implementations and the back end is abstracted away behind a std::async::mpsc::Sender
 //! interface.
 
+use std::error::Error;
+use std::fmt;
 use std::sync;
 
 use super::{ ArcData, ArcDataSlice };
@@ -22,9 +24,31 @@ pub mod sweeper;
 #[derive(Debug)]
 struct DecodeError;
 
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CRL DecodeError")
+    }
+}
+
+impl Error for DecodeError {
+    fn description(&self) -> &str {
+        "Invalid data encountered while decoding CRL content"
+    }
+
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
 impl From<crate::EncodingError> for DecodeError {
     fn from(_: crate::EncodingError) -> DecodeError {
         DecodeError{}
+    }
+}
+
+impl From<DecodeError> for std::io::Error {
+    fn from(e: DecodeError) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
     }
 }
 

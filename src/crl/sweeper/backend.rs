@@ -1,3 +1,4 @@
+
 use std::sync::{Mutex, Arc};
 
 use crossbeam::crossbeam_channel;
@@ -400,27 +401,20 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn placeholder_new(
-        //streams: Vec<Box<dyn FileStream>>,
-        entry_window_size: usize, // ensures we never need to read more than window_size entries during recovery
-        // recovered_transactions: &Vec<RecoveredTx>,
-        // recovered_allocations: &Vec<RecoveredAlloc>,
-        //last_entry_serial: LogEntrySerialNumber,
-        //last_entry_location: FileLocation
-        ) -> Backend {
+    pub fn recover(
+        crl_directory: &Path, 
+        entry_window_size: usize
+        ) -> Result<Backend> {
             let streams = Vec::new();
-            let recovered_transactions = Vec::new();
-            let recovered_allocations = Vec::new();
-            let last_entry_serial = LogEntrySerialNumber(0);
-            let last_entry_location = FileLocation {
-                file_id: FileId(0),
-                offset: 0,
-                length: 0
-            };
-            Backend {
-                backend: BackendImpl::new(streams, entry_window_size, &recovered_transactions,
-                  &recovered_allocations, last_entry_serial, last_entry_location)
-            }
+
+            let r = log_file::recover(crl_directory, entry_window_size)?;
+
+            
+            
+            Ok(Backend {
+                backend: BackendImpl::new(streams, entry_window_size, &r.transactions,
+                  &r.allocations, r.last_entry_serial, r.last_entry_location)
+            })
         }
 }
 
@@ -571,7 +565,7 @@ impl BackendImpl {
             }; // ---------- Unlock Log State Mutex ----------
 
             // Blocking Write
-            stream.write(buffers, entry_serial);
+            stream.write(buffers);
 
             if prune_required || entry.is_empty() {
                 prune_file = stream.rotate_files();

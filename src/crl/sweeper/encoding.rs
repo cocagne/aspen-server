@@ -127,6 +127,62 @@ pub(super) fn log_entry(
     (entry_location, buffers)
 }
 
+pub(super) fn load_entry_data(
+    buf: &mut Data, 
+    entry: &mut RecoveringEntry, 
+    entry_serial: LogEntrySerialNumber) -> Result<(), DecodeError> {
+    
+    for _ in 0 .. entry.num_tx {
+        let rtx = decode_tx_state(&mut buf, entry_serial)?;
+        entry.transactions.push(rtx);
+    }
+
+    for _ in 0 .. entry.num_allocs {
+        let ra = decode_alloc_state(&mut buf, entry_serial)?;
+        entry.allocations.push(ra);
+    }
+
+    for _ in 0 .. entry.num_tx_del {
+        entry.tx_deletions.push(TxId::decode_from(buf));
+    }
+
+    for _ in 0 .. entry.num_alloc_del {
+        entry.alloc_deletions.push(TxId::decode_from(buf));
+    }
+
+    Ok(())
+}
+
+pub(super) fn decode_entry(buf: &mut Data) -> Result<RecoveringEntry, DecodeError> {
+    if buf.remaining() < STATIC_ENTRY_SIZE as usize {
+        Err(DecodeError{})
+    } else {
+        let serial = buf.get_u64_le();
+        let entry_offset = buf.get_u64_le();
+        let earliest_needed = buf.get_u64_le();
+        let num_tx = buf.get_u32_le();
+        let num_allocs = buf.get_u32_le();
+        let num_tx_del = buf.get_u32_le();
+        let num_alloc_del = buf.get_u32_le();
+        let previous_entry_location = FileLocation::decode_from(buf);
+
+        Ok(RecoveringEntry {
+            serial: LogEntrySerialNumber(serial),
+            entry_offset,
+            earliest_needed,
+            num_tx,
+            num_allocs,
+            num_tx_del,
+            num_alloc_del,
+            previous_entry_location,
+            transactions: Vec::with_capacity(num_tx as usize),
+            allocations: Vec::with_capacity(num_allocs as usize),
+            tx_deletions: Vec::with_capacity(num_tx_del as usize),
+            alloc_deletions: Vec::with_capacity(num_alloc_del as usize)
+        })
+    }
+}
+
 // pub struct TransactionRecoveryState {
 //     store_id: store::Id, 17
 //     transaction_id: 16

@@ -22,6 +22,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync;
 
 use crossbeam::crossbeam_channel;
@@ -36,16 +37,16 @@ use super::{TransactionRecoveryState, AllocationRecoveryState};
 use super::{DecodeError, RequestId, RequestCompletionHandler};
 
 pub(crate) mod backend;
-pub(crate) mod dio_gather;
 pub(crate) mod encoding;
 pub(crate) mod file_stream;
 pub(crate) mod frontend;
 pub(crate) mod log_file;
+pub(crate) mod tri_file_stream;
 
 pub(self) use self::file_stream::FileStream;
 
-pub fn placeholder_new() {
-    backend::Backend::placeholder_new(0);
+pub fn recover(crl_directory: &Path, entry_window_size: usize) {
+    backend::Backend::recover(crl_directory, entry_window_size)
 }
 
 /// store::Id + UUID
@@ -239,6 +240,14 @@ pub(self) struct RecoveringEntry {
     allocations: Vec<RecoveringAlloc>,
     tx_deletions: Vec<TxId>,
     alloc_deletions: Vec<TxId>
+}
+
+pub(self) struct RecoveredCrlState {
+    log_files: Vec<(log_file::LogFile, Option<LogEntrySerialNumber>)>,
+    transactions: Vec<RecoveredTx>,
+    allocations: Vec<RecoveredAlloc>,
+    last_entry_serial: LogEntrySerialNumber,
+    last_entry_location: FileLocation
 }
 
 pub(self) struct EntryContent {
