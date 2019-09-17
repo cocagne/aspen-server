@@ -10,8 +10,6 @@ pub(super) fn log_entry(
     alloc_deletions: &Vec<TxId>,
     stream: &Box<&mut dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
 
-    let mut prune_file_from_log: Option<FileId> = None;
-
     let (data_sz, tail_sz, num_data_buffers) = calculate_write_size(txs, allocs, 
         tx_deletions, alloc_deletions);
 
@@ -133,12 +131,12 @@ pub(super) fn load_entry_data(
     entry_serial: LogEntrySerialNumber) -> Result<(), DecodeError> {
     
     for _ in 0 .. entry.num_tx {
-        let rtx = decode_tx_state(&mut buf, entry_serial)?;
+        let rtx = decode_tx_state(buf, entry_serial)?;
         entry.transactions.push(rtx);
     }
 
     for _ in 0 .. entry.num_allocs {
-        let ra = decode_alloc_state(&mut buf, entry_serial)?;
+        let ra = decode_alloc_state(buf, entry_serial)?;
         entry.allocations.push(ra);
     }
 
@@ -508,7 +506,7 @@ pub(super) fn tx_write_size(tx: &RefCell<Tx>) -> usize {
     data + STATIC_TX_SIZE as usize + update_count * (16 + FILE_LOCATION_SIZE as usize)
 }
 
-pub(super) fn tx_delete_size(txid: &TxId) -> usize {
+pub(super) fn tx_delete_size(_txid: &TxId) -> usize {
     TXID_SIZE as usize
 }
 
@@ -525,7 +523,7 @@ pub(super) fn alloc_write_size(alloc: &RefCell<Alloc>) -> usize {
     data + STATIC_ARS_SIZE as usize
 }
 
-pub(super) fn alloc_delete_size(txid: &TxId) -> usize {
+pub(super) fn alloc_delete_size(_txid: &TxId) -> usize {
     TXID_SIZE as usize
 }
 

@@ -404,12 +404,22 @@ impl Backend {
     pub fn recover(
         crl_directory: &Path, 
         entry_window_size: usize
-        ) -> Result<Backend> {
-            let streams = Vec::new();
-
-            let r = log_file::recover(crl_directory, entry_window_size)?;
-
+        ) -> Result<Backend, std::io::Error> {
             
+            let mut r = log_file::recover(crl_directory, entry_window_size)?;
+            
+            let mut streams = Vec::new();
+
+            assert!(r.log_files.len() % 3 == 0);
+
+            while r.log_files.len() > 0 {
+
+                let f3 = r.log_files.pop().unwrap();
+                let f2 = r.log_files.pop().unwrap();
+                let f1 = r.log_files.pop().unwrap();
+
+                streams.push(tri_file_stream::TriFileStream::new(f1, f2, f3));
+            }
             
             Ok(Backend {
                 backend: BackendImpl::new(streams, entry_window_size, &r.transactions,

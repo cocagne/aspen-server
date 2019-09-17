@@ -45,7 +45,7 @@ pub(crate) mod tri_file_stream;
 
 pub(self) use self::file_stream::FileStream;
 
-pub fn recover(crl_directory: &Path, entry_window_size: usize) {
+pub fn recover(crl_directory: &Path, entry_window_size: usize) -> Result<backend::Backend, std::io::Error> {
     backend::Backend::recover(crl_directory, entry_window_size)
 }
 

@@ -46,17 +46,17 @@ impl LogFile {
             unsafe {
                 libc::ftruncate(fd, 0);
             }
-            let fuuid = uuid::Uuid::new_v4().as_bytes();
-            write_bytes(fd, &fuuid[..])?;
+            let u = uuid::Uuid::new_v4();
+            write_bytes(fd, &u.as_bytes()[..])?;
         }
 
         let file_uuid = pread_uuid(fd, 0)?;
 
         size = seek(fd, 0, libc::SEEK_END)?;
 
-        let last = find_last_valid_entry(fd, file_id, size, &file_uuid)?;
+        let last = find_last_valid_entry(fd, size, &file_uuid)?;
 
-        let mut lf = LogFile{
+        let lf = LogFile{
             file_id,
             fd,
             len: size as usize,
@@ -76,14 +76,16 @@ impl LogFile {
 
     pub(super) fn write(&mut self, data: &Vec<ArcDataSlice>) -> Result<()> {
         let wsize: usize = data.iter().map(|d| d.len()).sum();
-        let iov: Vec<libc::iovec> = data.iter().map( |d| {
-            let p: *mut u8 = &mut d.as_bytes()[0];
-            libc::iovec {
-                iov_base: p as *mut libc::c_void,
-                iov_len: d.len()
-            }
-        }).collect();
+        
         unsafe {
+            let iov: Vec<libc::iovec> = data.iter().map( |d| {
+                let p: *const u8 = &d.as_bytes()[0];
+                libc::iovec {
+                    iov_base: p as *mut libc::c_void,
+                    iov_len: d.len()
+                }
+            }).collect();
+
             loop {
                 if libc::writev(self.fd, &iov[0], data.len() as libc::c_int) >= 0 {
                     break;
@@ -161,7 +163,6 @@ fn fdtell(fd: libc::c_int) -> Result<usize> {
 
 fn find_last_valid_entry(
     fd: libc::c_int, 
-    file_id: FileId, 
     file_size: usize, 
     file_uuid: &uuid::Uuid) -> Result<Option<(LogEntrySerialNumber, usize)>> {
         
@@ -175,7 +176,7 @@ fn find_last_valid_entry(
         if test_uuid == *file_uuid {
             let entry_offset = offset - STATIC_ENTRY_SIZE as usize;
 
-            let serial_bytes: [u8; 8] = [0; 8];
+            let mut serial_bytes: [u8; 8] = [0; 8];
             
             pread_bytes(fd, &mut serial_bytes[..], entry_offset)?;
 
@@ -195,7 +196,7 @@ pub(super) fn recover(
     crl_directory: &Path, 
     max_file_size: usize) -> Result<RecoveredCrlState> {
 
-    let raw_files = Vec::<(LogFile, Option<(LogEntrySerialNumber, usize)>)>::new();
+    let mut raw_files = Vec::<(LogFile, Option<(LogEntrySerialNumber, usize)>)>::new();
 
     let have_file = |i| -> bool {
         let p = crl_directory.join(format!("{}", i));
@@ -209,23 +210,26 @@ pub(super) fn recover(
         i += 1;
     }
 
-    let mut last: Option<(LogFile, LogEntrySerialNumber, usize)> = None;
+    let mut last: Option<(FileId, LogEntrySerialNumber, usize)> = None;
 
-    for t in raw_files {
-        if let Some((serial, offset)) = t.1 {
-            if let Some((file, cur_serial, _)) = last {
+    for t in &raw_files {
+        if let Some((serial, offset)) = &t.1 {
+            if let Some((_, cur_serial, _)) = &last {
                 if serial > cur_serial {
-                    last = Some((t.0, serial, offset));
+                    last = Some((t.0.file_id, *serial, *offset));
                 }
             } else {
-                last = Some((t.0, serial, offset))
+                last = Some((t.0.file_id, *serial, *offset))
             }
         }
     }
 
-    let files: Vec<LogFile> = raw_files.iter().map(|t| t.0).collect();
+    let mut files: Vec<(LogFile, Option<LogEntrySerialNumber>)> = Vec::new();
 
-    let crl_files: Vec<(LogFile, Option<LogEntrySerialNumber>)> = raw_files.iter().map(|t| (t.0, t.1.map(|x| x.0))).collect();
+    for t in raw_files {
+        files.push((t.0, t.1.map(|x| x.0)));
+    }
+
     let mut tx: Vec<RecoveredTx> = Vec::new();
     let mut alloc: Vec<RecoveredAlloc> = Vec::new();
     let mut last_entry_serial = LogEntrySerialNumber(0);
@@ -235,33 +239,33 @@ pub(super) fn recover(
         length: 0
     };
 
-    if let Some((last_file, last_serial, last_offset)) = last {
+    if let Some((last_file_id, last_serial, last_offset)) = last {
 
         last_entry_serial = last_serial;
 
         last_entry_location = FileLocation {
-            file_id: last_file.file_id,
+            file_id: last_file_id,
             offset: last_offset as u64,
             length: STATIC_ENTRY_SIZE as u32
         };
 
-        let transactions: HashMap<TxId, RecoveringTx> = HashMap::new();
-        let allocations: HashMap<TxId, RecoveringAlloc> = HashMap::new();
-        let deleted_tx: HashSet<TxId> = HashSet::new();
-        let deleted_alloc: HashSet<TxId> = HashSet::new();
+        let mut transactions: HashMap<TxId, RecoveringTx> = HashMap::new();
+        let mut allocations: HashMap<TxId, RecoveringAlloc> = HashMap::new();
+        let mut deleted_tx: HashSet<TxId> = HashSet::new();
+        let mut deleted_alloc: HashSet<TxId> = HashSet::new();
 
-        let mut file_id = last_file.file_id;
+        let mut file_id = last_file_id;
         let mut entry_serial = last_serial;
         let mut entry_offset = last_offset;
 
         let earliest_serial_needed = {
-            let mut d = last_file.read(last_offset, STATIC_ENTRY_SIZE as usize)?;
+            let mut d = files[last_file_id.0 as usize].0.read(last_offset, STATIC_ENTRY_SIZE as usize)?;
             let entry = encoding::decode_entry(&mut d)?;
             LogEntrySerialNumber(entry.earliest_needed)
         };
 
         while entry_serial <= earliest_serial_needed && entry_serial != LogEntrySerialNumber(0) {
-            let file = files[file_id.0 as usize];
+            let file = &files[file_id.0 as usize].0;
 
             let mut d = file.read(entry_offset, STATIC_ENTRY_SIZE as usize)?;
             let mut entry = encoding::decode_entry(&mut d)?;
@@ -294,10 +298,13 @@ pub(super) fn recover(
                     allocations.insert(ra.id, ra);
                 }
             }
+
+            file_id = entry.previous_entry_location.file_id;
+            entry_offset = entry.previous_entry_location.offset as usize;
         }
 
         let get_data = |file_location: &FileLocation| -> Result<ArcData> {
-            let d = files[file_location.file_id.0 as usize].read(file_location.offset as usize, file_location.length as usize)?;
+            let d = files[file_location.file_id.0 as usize].0.read(file_location.offset as usize, file_location.length as usize)?;
             Ok(d.into())
         };
 
@@ -308,7 +315,7 @@ pub(super) fn recover(
 
         for (txid, rtx) in transactions {
 
-            let ou: Vec<transaction::ObjectUpdate> = Vec::with_capacity(rtx.object_updates.len());
+            let mut ou: Vec<transaction::ObjectUpdate> = Vec::with_capacity(rtx.object_updates.len());
 
             for t in &rtx.object_updates {
                 ou.push(transaction::ObjectUpdate {
@@ -348,7 +355,7 @@ pub(super) fn recover(
     };
 
     Ok(RecoveredCrlState {
-        log_files: crl_files,
+        log_files: files,
         transactions: tx,
         allocations: alloc,
         last_entry_serial,
