@@ -446,11 +446,10 @@ impl Backend {
             
         let mut r = log_file::recover(crl_directory, entry_window_size, num_streams)?;
         
-        
-
         assert!(r.log_files.len() % 3 == 0);
 
         let (sender, receiver) = crossbeam_channel::unbounded();
+        
         let log_state = LogState::new(
                     receiver, entry_window_size, 
                     &r.transactions, &r.allocations, 
