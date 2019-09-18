@@ -1,25 +1,7 @@
 
-use std::sync;
 use super::*;
-use crate::crl::{Crl, InterfaceFactory, RequestCompletionHandler};
 use crossbeam::crossbeam_channel;
 
-pub struct FrontendFactory {
-    sender: crossbeam_channel::Sender<Request>
-}
-
-impl InterfaceFactory for FrontendFactory {
-    
-    fn new(&self, save_handler: sync::Arc<dyn RequestCompletionHandler>) -> Box<dyn Crl> {
-        let (response_sender, receiver) = crossbeam_channel::unbounded();
-
-        self.sender.send(Request::RegisterClientRequest{sender: response_sender, handler: save_handler}).unwrap();
-
-        let client_id = receiver.recv().unwrap().client_id;
-
-        Box::new(Frontend::new(client_id, self.sender.clone()))
-    }
-}
 
 pub(super) struct Frontend {
     client_id: ClientId,

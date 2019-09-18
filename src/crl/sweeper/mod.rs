@@ -48,8 +48,9 @@ pub(self) use self::file_stream::FileStream;
 pub fn recover(
     crl_directory: &Path, 
     entry_window_size: usize,
-    num_streams: usize) -> Result<backend::Backend, std::io::Error> {
-    backend::Backend::recover(crl_directory, entry_window_size, num_streams)
+    num_streams: usize) -> Result<Box<dyn crate::crl::Backend>, std::io::Error> {
+    let backend = backend::Backend::recover(crl_directory, entry_window_size, num_streams)?;
+    Ok(Box::new(backend))
 }
 
 /// store::Id + UUID
@@ -253,56 +254,6 @@ pub(self) struct RecoveredCrlState {
     last_entry_location: FileLocation
 }
 
-pub(self) struct EntryContent {
-    requests: Vec<super::RequestId>,
-    tx_set: HashSet<TxId>,
-    tx_deletions: Vec<TxId>,
-    alloc: Vec<TxId>,
-    alloc_deletions: Vec<TxId>
-}
-
-impl EntryContent {
-    fn new() -> EntryContent {
-        EntryContent {
-            requests: Vec::new(),
-            tx_set: HashSet::new(),
-            tx_deletions: Vec::new(),
-            alloc: Vec::new(),
-            alloc_deletions: Vec::new()
-        }
-    }
-
-    fn clear(&mut self) {
-        self.requests.clear();
-        self.tx_set.clear();
-        self.tx_deletions.clear();
-        self.alloc.clear();
-        self.alloc_deletions.clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.requests.is_empty() && self.tx_set.is_empty() &&
-        self.tx_deletions.is_empty() && self.alloc.is_empty() &&
-        self.alloc_deletions.is_empty()
-    }
-
-    fn add_transaction(&mut self, tx_id: TxId) {
-        self.tx_set.insert(tx_id);
-    }
-
-    fn add_allocation(&mut self, tx_id: TxId) {
-        self.alloc.push(tx_id);
-    }
-
-    fn drop_transaction(&mut self, tx_id: TxId) {
-        self.tx_deletions.push(tx_id);
-    }
-
-    fn drop_allocation(&mut self, tx_id: TxId) {
-        self.alloc_deletions.push(tx_id);
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(self) struct ClientId(usize);
 
@@ -349,9 +300,9 @@ pub(self) enum Request {
     },
     RegisterClientRequest {
         sender: crossbeam_channel::Sender<RegisterClientResponse>,
-        handler: sync::Arc<dyn RequestCompletionHandler>
+        handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>
     },
-    
+    Terminate
 }
 
 

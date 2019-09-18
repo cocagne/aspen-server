@@ -62,17 +62,21 @@ pub struct RequestId(u64);
 /// implementations of this trait should wrap a std::sync::mpsc::Sender and use it
 /// to send the completion notice back to the thread that originated the request. A
 /// trait object is used rather than doing this directly to allow for flexibility in
-/// the message type sent over the channel
+/// the message type sent over the channel. The success arguemnt will be true if the
+/// state was successfully written to persistent media, false if an error occurred
 pub trait RequestCompletionHandler {
-    fn transaction_state_saved(&self, request_id: RequestId);
-    fn allocation_state_saved(&self, request_id: RequestId);
+    fn transaction_save_complete(&self, request_id: RequestId, success: bool);
+    fn allocation_save_complete(&self, request_id: RequestId, success: bool);
 }
 
-/// Factory interface for Crl creation
-pub trait InterfaceFactory {
+/// Interface to the CRL backend implementation
+pub trait Backend {
+    fn shutdown(self);
+    
     /// Creates a new Crl trait object that will notify the supplied RequestCompletionHandler
     /// when requests complete
-    fn new(&self, save_handler: sync::Arc<dyn RequestCompletionHandler>) -> Box<dyn Crl>;
+    fn new_interface(&self, 
+        save_handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>) -> Box<dyn Crl>;
 }
 
 /// Represents the persistent state needed to recover a transaction after a crash

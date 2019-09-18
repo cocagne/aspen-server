@@ -8,7 +8,7 @@ pub(super) fn log_entry(
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
     alloc_deletions: &Vec<TxId>,
-    stream: &Box<&mut dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
+    stream: &Box<dyn FileStream>) -> (FileLocation, Vec<ArcDataSlice>) {
 
     let (data_sz, tail_sz, num_data_buffers) = calculate_write_size(txs, allocs, 
         tx_deletions, alloc_deletions);

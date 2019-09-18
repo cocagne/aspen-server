@@ -5,7 +5,7 @@ use std::thread;
 use crossbeam::crossbeam_channel;
 use crossbeam::crossbeam_channel::TryRecvError;
 
-use crate::crl::RequestCompletionHandler;
+use crate::crl::{RequestCompletionHandler, Crl};
 use super::*;
 
 // Used to indicate that an entry is full and cannot accept any more data
@@ -20,10 +20,10 @@ pub(self) struct LogState {
     last_entry_location: FileLocation,
     earliest_entry_needed: LogEntrySerialNumber,
 
-    completion_handlers: Vec<Arc<dyn RequestCompletionHandler>>,
+    completion_handlers: Vec<Arc<dyn RequestCompletionHandler + Send + Sync>>,
     last_notified_serial: LogEntrySerialNumber,
 
-    pending_completions: HashMap<LogEntrySerialNumber, Vec<Completion>>,
+    pending_completions: HashMap<LogEntrySerialNumber, (bool, Vec<Completion>)>,
 
     /// Channels do not have a peek option so if we cannot add a request to the current entry
     /// it will be placed here for the next entry to consume
@@ -160,7 +160,7 @@ impl LogState {
             drop(ma);
 
             if add {
-                entry.add_allocation(tx_id, a, None);
+                entry.add_allocation(tx_id, a, None)?;
             }
         }
 
@@ -306,7 +306,8 @@ impl LogState {
                     }
                 }
 
-                sender.send(FullStateResponse(txs, allocs));
+                // Intentionally ignore any send errors
+                sender.send(FullStateResponse(txs, allocs)).unwrap_or(()); 
                 RequestResult::Okay   
             },
             Request::RegisterClientRequest {
@@ -315,9 +316,12 @@ impl LogState {
             } => {
                 let client_id = ClientId(self.completion_handlers.len());
                 self.completion_handlers.push(handler.clone());
-                sender.send(RegisterClientResponse { client_id });
+
+                // Intentionally ignore any send errors
+                sender.send(RegisterClientResponse { client_id }).unwrap_or(()); 
                 RequestResult::Okay
-            }
+            },
+            Request::Terminate => RequestResult::Terminate
         }
     }
 
@@ -363,7 +367,7 @@ impl LogState {
     /// Returns: (Optional EntrySerialNumber, FileLocation of this entry, entry data to be passed to the stream)
     pub fn create_log_entry(&mut self, 
         entry: &mut Entry,
-        stream: &Box<&mut dyn FileStream>) -> (LogEntrySerialNumber, Vec::<ArcDataSlice>) {
+        stream: &Box<dyn FileStream>) -> (LogEntrySerialNumber, Vec::<ArcDataSlice>) {
         
         let mut txs: Vec<&RefCell<Tx>> = Vec::new();
         let mut allocs: Vec<&RefCell<Alloc>> = Vec::new();
@@ -394,16 +398,46 @@ impl LogState {
 
 enum RequestResult {
     Okay,
-    EntryIsFull
+    EntryIsFull,
+    Terminate
 }
 
 pub(super) struct Backend {
-    log_state: Arc<Mutex<LogState>>,
     io_threads: Vec<thread::JoinHandle<()>>,
     pub sender: crossbeam_channel::Sender<Request>
 }
 
+impl crate::crl::Backend for Backend {
+    fn shutdown(self) {
+        self.shutdown();
+    }
+
+    fn new_interface(&self, 
+        save_handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>) -> Box<dyn Crl> {
+
+        let (response_sender, receiver) = crossbeam_channel::unbounded();
+
+        self.sender.send(Request::RegisterClientRequest{sender: response_sender, handler: save_handler}).unwrap();
+
+        let client_id = receiver.recv().unwrap().client_id;
+
+        Box::new(frontend::Frontend::new(client_id, self.sender.clone()))
+    }
+}
+
 impl Backend {
+
+    pub fn shutdown(self) {
+        for _ in &self.io_threads {
+            // Intentionally ignore send errors
+            self.sender.send(Request::Terminate).unwrap_or(());
+        }
+        for t in self.io_threads {
+            // Intentionally ignore send errors
+            t.join().unwrap_or(());
+        }
+    }
+
     pub fn recover(
         crl_directory: &Path, 
         entry_window_size: usize,
@@ -422,7 +456,7 @@ impl Backend {
                     &r.transactions, &r.allocations, 
                     r.last_entry_serial, r.last_entry_location);
 
-        let io_threads = Vec::new();
+        let mut io_threads = Vec::new();
 
         while r.log_files.len() > 0 {
 
@@ -430,30 +464,26 @@ impl Backend {
             let f2 = r.log_files.pop().unwrap();
             let f1 = r.log_files.pop().unwrap();
 
+            let ls = log_state.clone();
+
             let handle = thread::spawn( move || {
-                io_thread(log_state, tri_file_stream::TriFileStream::new(f1, f2, f3));
+                io_thread(ls, tri_file_stream::TriFileStream::new(f1, f2, f3));
             });
 
             io_threads.push(handle);
         }
 
-
         let be = Backend{
-            log_state ,
-            streams,
+            io_threads,
             sender,
         };
 
         Ok(be)
     }
-
-    pub(super) fn clone_sender(&self) -> crossbeam_channel::Sender<Request> {
-        self.sender.clone()
-    }
 }
 
-fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
-        
+fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>) {
+
     let max_file_size = stream.const_max_file_size();
 
     let mut prune_file: Option<FileId> = None;
@@ -495,7 +525,8 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                     if let Some(request) = state.next_request.clone() {
                         match state.add_request(&mut entry, &request) {
                             RequestResult::Okay => state.next_request = None,
-                            RequestResult::EntryIsFull => ()
+                            RequestResult::EntryIsFull => (),
+                            RequestResult::Terminate => break 'top_level
                         }
                     }
                 }
@@ -514,7 +545,8 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                                     RequestResult::EntryIsFull => {
                                         state.next_request = Some(request);
                                         break 'read_loop;
-                                    }
+                                    },
+                                    RequestResult::Terminate => break 'top_level
                                 };
                             },
                             Err(e) => {
@@ -535,7 +567,7 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                                                 // The only reason channel.recv() can error
                                                 // here is due the channel being both empty
                                                 // and broken. Terminate this IO thread.
-                                                Err(e) => break 'top_level,
+                                                Err(_) => break 'top_level,
 
                                                 Ok(request) => {
                                                     match state.add_request(&mut entry, &request) {
@@ -543,6 +575,9 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                                                         RequestResult::EntryIsFull => {
                                                             state.next_request = Some(request);
                                                             break 'read_loop;
+                                                        },
+                                                        RequestResult::Terminate => {
+                                                            break 'top_level;
                                                         }
                                                     };
                                                 }
@@ -566,10 +601,23 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
         }; // ---------- Unlock Log State Mutex ----------
 
         // Blocking Write
-        stream.write(buffers);
+        let success = match stream.write(buffers) {
+            Ok(_) => true,
+            Err(_) => {
+                // TODO - Log error
+                false
+            }
+        };
 
         if prune_required || entry.is_empty() {
-            prune_file = stream.rotate_files();
+            match stream.rotate_files() {
+                Ok(fid) => prune_file = fid,
+                Err(_) => {
+                    // TODO: Log error and exit thread
+                    // This stream is busted. Exit thread
+                    break 'top_level
+                } 
+            }
         }
         
         { // ---------- Lock Log State Mutex ----------
@@ -579,8 +627,8 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                 // Run completion handlers for this entry
                 for cr in &entry.requests {
                     match cr {
-                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(*request_id),
-                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(*request_id)
+                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_save_complete(*request_id, success),
+                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_save_complete(*request_id, success)
                     }
                 }
 
@@ -592,11 +640,12 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
 
                     match state.pending_completions.remove(&next) {
                         None => break,
-                        Some(v) => {
+                        Some(t) => {
+                            let (psuccess, v) = t;
                             for cr in v {
                                 match cr {
-                                    Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_state_saved(request_id),
-                                    Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_state_saved(request_id)
+                                    Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_save_complete(request_id, psuccess),
+                                    Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_save_complete(request_id, psuccess)
                                 }
                             }
                             state.last_notified_serial = next;
@@ -604,7 +653,7 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, stream: Box<dyn FileStream>) {
                     }
                 }
             } else {
-                state.pending_completions.insert(entry_serial, entry.requests.clone());
+                state.pending_completions.insert(entry_serial, (success, entry.requests.clone()));
             }
             
         } // ---------- Unlock Log State Mutex ----------
@@ -648,7 +697,7 @@ impl Entry {
         }
     }
 
-    fn reset(&mut self, stream: &Box<&mut dyn FileStream>) {
+    fn reset(&mut self, stream: &Box<dyn FileStream>) {
         self.requests.clear();
         self.tx_set.clear();
         self.tx_deletions.clear();

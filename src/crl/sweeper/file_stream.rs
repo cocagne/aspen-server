@@ -1,3 +1,4 @@
+use std::io::Result;
 
 use super::FileId;
 use crate::ArcDataSlice;
@@ -14,9 +15,9 @@ pub(super) trait FileStream {
     /// Writes the provided data to the file provided by status()
     /// 
     /// Returns nothing on success and and error if the write failed
-    fn write(&mut self, data: Vec<ArcDataSlice>); 
+    fn write(&mut self, data: Vec<ArcDataSlice>) -> Result<()>; 
 
     /// Rotates the underlying files and optionally returns a FileId
     /// to prune entries from
-    fn rotate_files(&mut self) -> Option<FileId>;
+    fn rotate_files(&mut self) -> Result<Option<FileId>>;
 }

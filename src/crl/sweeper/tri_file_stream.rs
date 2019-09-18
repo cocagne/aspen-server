@@ -1,3 +1,4 @@
+use std::io::Result;
 
 use super::*;
 use log_file::LogFile;
@@ -56,11 +57,11 @@ impl FileStream for TriFileStream {
         (c.file_id, c.file_uuid, c.len)
     }
 
-    fn write(&mut self, data: Vec<ArcDataSlice>) {
-        self.files[self.active as usize].write(&data);
+    fn write(&mut self, data: Vec<ArcDataSlice>) -> Result<()> {
+        self.files[self.active as usize].write(&data)
     }
     
-    fn rotate_files(&mut self) -> Option<FileId> {
+    fn rotate_files(&mut self) -> Result<Option<FileId>> {
 
         let (new_active, retire) = match self.active {
             Index::Zero => (Index::One,  Index::Two),
@@ -69,8 +70,8 @@ impl FileStream for TriFileStream {
         };
 
         self.active = new_active;
-        self.files[self.active as usize].recycle();
+        self.files[self.active as usize].recycle()?;
 
-        return Some(self.files[retire as usize].file_id);
+        return Ok(Some(self.files[retire as usize].file_id));
     }
 }
