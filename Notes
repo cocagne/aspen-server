@@ -1,4 +1,7 @@
 
+FD needs wrapper with drop() overridden to close the file handle. or stream can do it.
+switch mod.rs -> module-name
+
 Rather than pointer-heavy approach, create a LocalUpdates struct with a single pointer and an 
 array of (UUID, offset, length) values. They always arrive together and are used together. No
 need to treat each individually. For writes, we can use the LocalUpdates structure as-is and
