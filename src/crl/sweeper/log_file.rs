@@ -1,21 +1,37 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::ffi::CString;
 use std::io::{Result, Error, ErrorKind};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use libc;
+use log::{error, info, warn};
 
 use crate::{Data, ArcDataSlice};
 
 use super::*;
 
 pub(super) struct LogFile {
+    file_path: Box<PathBuf>,
     pub file_id: FileId,
     fd: libc::c_int,
     pub len: usize,
     pub max_size: usize,
     pub file_uuid: uuid::Uuid
+}
+
+impl Drop for LogFile {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd);
+        }
+    }
+}
+impl fmt::Display for LogFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CRL Sweeper File: {}", self.file_path.as_path().display())
+    }
 }
 
 impl LogFile {
@@ -34,6 +50,7 @@ impl LogFile {
         };
 
         if fd < 0 {
+            error!("Failed to open CRL file {}", fp.display());
             return Err(Error::last_os_error());
         }
 
@@ -57,6 +74,7 @@ impl LogFile {
         let last = find_last_valid_entry(fd, size, &file_uuid)?;
 
         let lf = LogFile{
+            file_path: Box::new(p),
             file_id,
             fd,
             len: size as usize,
@@ -93,7 +111,10 @@ impl LogFile {
                     let err = Error::last_os_error();
                     match err.kind() {
                         ErrorKind::Interrupted => (),
-                        _ => return Err(err)
+                        _ => return {
+                            warn!("Unexpected error occured during CRL file write: {}", err);
+                            Err(err)
+                        }
                     }
                 }
             }
@@ -103,6 +124,8 @@ impl LogFile {
     }
 
     pub(super) fn recycle(&mut self) -> Result<()> {
+        info!("Recycling {}", self);
+        
         seek(self.fd, 0, libc::SEEK_SET)?;
 
         unsafe {
