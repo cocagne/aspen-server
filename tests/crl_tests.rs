@@ -9,13 +9,7 @@ use aspen_server::crl::RequestId;
 use aspen_server::crl::sweeper;
 use aspen_server::{store, object, transaction, hlc};
 
-enum RType {
-    Tx,
-    Alloc
-}
-
 struct Response {
-    kind: RType,
     request_id: RequestId,
     success: bool
 }
@@ -27,14 +21,12 @@ struct CHandler {
 impl crl::RequestCompletionHandler for CHandler {
     fn transaction_save_complete(&self, request_id: RequestId, success: bool) {
         self.sender.send(Response {
-            kind : RType::Tx,
             request_id,
             success
         }).unwrap();
     }
     fn allocation_save_complete(&self, request_id: RequestId, success: bool) {
         self.sender.send(Response {
-            kind : RType::Alloc,
             request_id,
             success
         }).unwrap();
