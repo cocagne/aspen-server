@@ -190,11 +190,13 @@ impl LogState {
                     Some(tx) => {
                         let mut mtx = tx.borrow_mut();
 
+                        mtx.state.tx_disposition = *tx_disposition;
+                        mtx.state.paxos_state = *paxos_state;
+
+                        // Check for late arrival of object update content
                         if mtx.state.object_updates.len() == 0 && object_updates.len() != 0 {
                             mtx.state.object_updates = object_updates.clone();
                             mtx.data_locations = None;
-                            mtx.state.tx_disposition = *tx_disposition;
-                            mtx.state.paxos_state = *paxos_state;
                         }
 
                         drop(mtx);
@@ -238,8 +240,15 @@ impl LogState {
                     let mut mtx = tx.borrow_mut();
                     mtx.data_locations = None;
                     mtx.state.object_updates.clear();
-                };
-                RequestResult::Okay
+                    // can safely ignore errors here
+                    drop(mtx);
+                    match entry.add_transaction(&txid, &tx, None) {
+                        Ok(_) => RequestResult::Okay,
+                        Err(_) => RequestResult::EntryIsFull
+                    }
+                } else {
+                    RequestResult::Okay
+                }
             },
             Request::DeleteTransactionState {
                 store_id,
@@ -251,7 +260,9 @@ impl LogState {
                         self.transactions.remove(&txid);
                         RequestResult::Okay
                     },
-                    Err(_) => RequestResult::EntryIsFull
+                    Err(_) => {
+                        RequestResult::EntryIsFull
+                    }
                 }
             },
             Request::SaveAllocationState {
@@ -282,7 +293,9 @@ impl LogState {
                         self.allocations.remove(&txid);
                         RequestResult::Okay
                     },
-                    Err(_) => RequestResult::EntryIsFull
+                    Err(_) => {
+                        RequestResult::EntryIsFull
+                    }
                 }
             },
             Request::GetFullRecoveryState {
@@ -408,8 +421,8 @@ pub(super) struct Backend {
 }
 
 impl crate::crl::Backend for Backend {
-    fn shutdown(self) {
-        self.shutdown();
+    fn shutdown(&mut self) {
+        self.shutdown_impl();
     }
 
     fn new_interface(&self, 
@@ -427,24 +440,26 @@ impl crate::crl::Backend for Backend {
 
 impl Backend {
 
-    pub fn shutdown(self) {
+    pub fn shutdown_impl(&mut self) {
+
         for _ in &self.io_threads {
             // Intentionally ignore send errors
             self.sender.send(Request::Terminate).unwrap_or(());
         }
-        for t in self.io_threads {
-            // Intentionally ignore send errors
-            t.join().unwrap_or(());
+        while !self.io_threads.is_empty() {
+            self.io_threads.pop().map(|t| t.join());
         }
     }
 
     pub fn recover(
         crl_directory: &Path, 
         entry_window_size: usize,
-        num_streams: usize
+        max_entry_operations: usize,
+        num_streams: usize,
+        max_file_size: usize
         ) -> Result<Backend, std::io::Error> {
-            
-        let mut r = log_file::recover(crl_directory, entry_window_size, num_streams)?;
+
+        let mut r = log_file::recover(crl_directory, max_file_size, num_streams)?;
         
         assert!(r.log_files.len() % 3 == 0);
 
@@ -466,7 +481,7 @@ impl Backend {
             let ls = log_state.clone();
 
             let handle = thread::spawn( move || {
-                io_thread(ls, tri_file_stream::TriFileStream::new(f1, f2, f3));
+                io_thread(ls, tri_file_stream::TriFileStream::new(f1, f2, f3), max_entry_operations);
             });
 
             io_threads.push(handle);
@@ -481,12 +496,12 @@ impl Backend {
     }
 }
 
-fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>) {
+fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, max_entry_operations: usize) {
 
     let max_file_size = stream.const_max_file_size();
 
     let mut prune_file: Option<FileId> = None;
-    let mut entry = Entry::new(max_file_size);
+    let mut entry = Entry::new(max_file_size, max_entry_operations);
 
     'top_level: loop {
         
@@ -594,8 +609,6 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>) {
 
             let prune_required = ! state.next_request.is_none();
 
-            
-
             (prune_required, entry_serial, buffers)
         }; // ---------- Unlock Log State Mutex ----------
 
@@ -672,17 +685,14 @@ struct Entry {
     allocs: Vec<TxId>,
     alloc_deletions: Vec<TxId>,
     max_size: usize,
+    max_operations: usize,
     size: usize,
-    offset: usize
+    offset: usize,
+    operations: usize
 }
 
 impl Entry {
-    fn new(max_file_size: usize) -> Entry {
-
-        // Reduce the raw maximum file size by the size of the static entry block
-        // and ensure sufficient space for padding the entry to end on a 4k aligned
-        // boundary.
-        let max_file_size = max_file_size - STATIC_ENTRY_SIZE as usize - 4096*2;
+    fn new(max_file_size: usize, max_operations: usize) -> Entry {
 
         Entry {
             requests: Vec::new(),
@@ -691,8 +701,10 @@ impl Entry {
             allocs: Vec::new(),
             alloc_deletions: Vec::new(),
             max_size: max_file_size,
+            max_operations,
             size: 0,
-            offset: 0
+            offset: 0,
+            operations: 0
         }
     }
 
@@ -705,6 +717,7 @@ impl Entry {
         self.size = 0;
         let (_, _, file_offset) = stream.status();
         self.offset = file_offset;
+        self.operations = 0;
     }
 
     fn is_empty(&self) -> bool {
@@ -714,11 +727,21 @@ impl Entry {
         self.alloc_deletions.is_empty()
     }
 
+    fn have_room_for(&self, nbytes: usize) -> bool {
+        self.offset + self.size + nbytes + STATIC_ENTRY_SIZE as usize + 4096 <= self.max_size
+    }
+
     fn add_transaction(&mut self, 
         tx_id: &TxId, 
         tx: &RefCell<Tx>,
         req: Option<&ClientRequest>) -> Result<(), EntryFull> {
+            
+        if self.operations == self.max_operations {
+            return Err(EntryFull{});
+        }
+
         if self.tx_set.contains(tx_id) {
+            // Transaction is already part of this entry
             if let Some(cr) = req {
                 self.requests.push(Completion::TxSave(cr.0, cr.1));
             }
@@ -726,15 +749,17 @@ impl Entry {
         } else {
             
             let esize = encoding::tx_write_size(tx);
-            if self.size + esize > self.max_size {
-                return Err(EntryFull{});
-            } else {
+
+            if self.have_room_for(esize) {
+                self.operations += 1;
                 self.tx_set.insert(tx_id.clone());
                 self.size += esize;
                 if let Some(cr) = req {
                     self.requests.push(Completion::TxSave(cr.0, cr.1));
                 }
                 return Ok(());
+            } else {
+                return Err(EntryFull{});   
             }
         }
     }
@@ -743,38 +768,59 @@ impl Entry {
         tx_id: &TxId, 
         alloc: &RefCell<Alloc>,
         req: Option<&ClientRequest>) -> Result<(), EntryFull> {
-        let asize = encoding::alloc_write_size(alloc);
-        if self.size + asize > self.max_size {
+
+        if self.operations == self.max_operations {
             return Err(EntryFull{});
-        } else {
+        }
+
+        let asize = encoding::alloc_write_size(alloc);
+
+        if self.have_room_for(asize) {
+            self.operations += 1;
             self.allocs.push(tx_id.clone());
             self.size += asize;
             if let Some(cr) = req {
                 self.requests.push(Completion::AllocSave(cr.0, cr.1));
             }
             return Ok(());
+        } else {
+            return Err(EntryFull{});
         }
     }
 
     fn drop_transaction(&mut self, tx_id: &TxId) -> Result<(), EntryFull> {
-        let tdsize = encoding::tx_delete_size(tx_id);
-        if self.size + tdsize > self.max_size {
+
+        if self.operations == self.max_operations {
             return Err(EntryFull{});
-        } else {
+        }
+
+        let tdsize = encoding::tx_delete_size(tx_id);
+
+        if self.have_room_for(tdsize) {
+            self.operations += 1;
             self.tx_deletions.push(tx_id.clone());
             self.size += tdsize;
             return Ok(());
+        } else {
+            return Err(EntryFull{});
         }
     }
 
     fn drop_allocation(&mut self, tx_id: &TxId) -> Result<(), EntryFull> {
-        let adsize = encoding::alloc_delete_size(&tx_id);
-        if self.size + adsize > self.max_size {
+
+        if self.operations == self.max_operations {
             return Err(EntryFull{});
-        } else {
+        }
+
+        let adsize = encoding::alloc_delete_size(&tx_id);
+
+        if self.have_room_for(adsize) {
+            self.operations += 1;
             self.alloc_deletions.push(tx_id.clone());
             self.size += adsize;
             return Ok(());
+        } else {
+            return Err(EntryFull{});
         }
     }
 }

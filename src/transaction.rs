@@ -69,7 +69,7 @@ impl fmt::Display for Disposition {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ObjectUpdate {
     pub object_id: object::Id,
     pub data: ArcDataSlice

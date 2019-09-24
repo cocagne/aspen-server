@@ -2,17 +2,19 @@
 use std::sync::Arc;
 use std::ops;
 
+#[derive(Debug)]
 pub struct DataMut {
     v: Vec<u8>,
     offset: usize
 }
 
+#[derive(Eq, PartialEq, Debug)]
 pub struct Data {
     pub buffer: Vec<u8>,
     offset: usize
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ArcData {
     pub buffer: Arc<Vec<u8>>,
 }
@@ -183,6 +185,16 @@ impl ArcData {
 }
 
 impl ArcDataSlice {
+    pub fn from_vec(v: Vec<u8>) -> ArcDataSlice {
+        let end = v.len();
+        ArcDataSlice {
+            buffer: Arc::new(v),
+            begin: 0,
+            end: end
+
+        }
+    }
+
     pub fn new(adata: &ArcData, offset: usize, end: usize) -> ArcDataSlice {
         ArcDataSlice {
             buffer: adata.buffer.clone(),

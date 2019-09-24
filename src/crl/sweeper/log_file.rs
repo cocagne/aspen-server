@@ -34,6 +34,46 @@ impl fmt::Display for LogFile {
     }
 }
 
+#[cfg(target_os="linux")]
+fn open_synchronous_fd(path: &CString) -> libc::c_int {
+    const O_DIRECT: libc::c_int = 0x4000;
+    const O_DSYNC: libc::c_int  = 4000;
+
+    unsafe {
+        libc::open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR | O_DIRECT | O_DSYNC)
+    }
+}
+
+#[cfg(target_os="macos")]
+fn open_synchronous_fd(path: &CString) -> libc::c_int {
+    const F_NOCACHE: libc::c_int = 0x30;
+
+    unsafe {
+        let mut fd = libc::open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR);
+
+        if fd > 0 {
+            if libc::fchmod(fd, 0o644) < 0 {
+                fd = -1;
+            }
+        }
+
+        if fd > 0 {
+            if libc::fcntl(fd, F_NOCACHE, 1) < 0 {
+                fd = -1;
+            }
+        }
+
+        fd
+    }
+}
+
+#[cfg(not(any(target_os="linux", target_os="macos")))]
+fn open_synchronous_fd(path: &CString) -> libc::c_int {
+    unsafe {
+        libc::open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR)
+    }
+}
+
 impl LogFile {
     fn new(
         directory: &Path, 
@@ -44,11 +84,8 @@ impl LogFile {
         let p = directory.join(f);
         let fp = p.as_path();
 
-        let fd = unsafe {
-            let cpath = CString::new(fp.as_os_str().as_bytes()).unwrap();
-            libc::open(cpath.as_ptr(), libc::O_CREAT | libc::O_RDWR)
-        };
-
+        let fd = open_synchronous_fd(&CString::new(fp.as_os_str().as_bytes()).unwrap());
+        
         if fd < 0 {
             error!("Failed to open CRL file {}", fp.display());
             return Err(Error::last_os_error());
@@ -56,7 +93,6 @@ impl LogFile {
 
         let mut size = seek(fd, 0, libc::SEEK_END)?;
             
-        
         if size < (16 + STATIC_ENTRY_SIZE as usize) {
             // Initialize 
             seek(fd, 0, libc::SEEK_SET)?;
@@ -66,7 +102,7 @@ impl LogFile {
             let u = uuid::Uuid::new_v4();
             write_bytes(fd, &u.as_bytes()[..])?;
         }
-
+        
         let file_uuid = pread_uuid(fd, 0)?;
 
         size = seek(fd, 0, libc::SEEK_END)?;
@@ -87,8 +123,10 @@ impl LogFile {
 
     fn read(&self, offset: usize, nbytes: usize) -> Result<Data> {
         let mut v = Vec::<u8>::with_capacity(nbytes);
-        v.resize(nbytes, 0);
-        pread_bytes(self.fd, &mut v[..], offset)?;
+        if nbytes > 0 {
+            v.resize(nbytes, 0);
+            pread_bytes(self.fd, &mut v[..], offset)?;
+        }
         Ok(Data::new(v))
     }
 
@@ -118,6 +156,10 @@ impl LogFile {
                     }
                 }
             }
+
+            if !( cfg!(target_os="linux") || cfg!(target_os="macos") ) {
+                libc::fsync(self.fd);
+            }
         }
         self.len += wsize;
         Ok(())
@@ -125,7 +167,7 @@ impl LogFile {
 
     pub(super) fn recycle(&mut self) -> Result<()> {
         info!("Recycling {}", self);
-        
+
         seek(self.fd, 0, libc::SEEK_SET)?;
 
         unsafe {
@@ -142,12 +184,16 @@ impl LogFile {
 }
 
 fn pread_bytes(fd: libc::c_int, s: &mut [u8], offset: usize) -> Result<()> {
-    let p: *mut u8 = &mut s[0];
-    unsafe {
-        if libc::pread(fd, p as *mut libc::c_void, s.len(), offset as libc::off_t) < 0 {
-            Err(Error::last_os_error())
-        } else {
-            Ok(())
+    if s.len() == 0 {
+        Ok(())
+    } else {
+        let p: *mut u8 = &mut s[0];
+        unsafe {
+            if libc::pread(fd, p as *mut libc::c_void, s.len(), offset as libc::off_t) < 0 {
+                Err(Error::last_os_error())
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -207,6 +253,8 @@ fn find_last_valid_entry(
 
         offset -= 4096;
     }
+
+    //println!("LAST: {:?} file size {} offset {}", last, file_size, (file_size - (file_size % 4096)));
     
     Ok(last)
 }
@@ -222,7 +270,7 @@ pub(super) fn recover(
         let f = LogFile::new(crl_directory, FileId(i as u16), max_file_size)?;
         raw_files.push(f);
     }
-
+    
     let mut last: Option<(FileId, LogEntrySerialNumber, usize)> = None;
 
     for t in &raw_files {
@@ -269,7 +317,7 @@ pub(super) fn recover(
 
         let mut file_id = last_file_id;
         let mut entry_serial = last_serial;
-        let mut entry_offset = last_offset;
+        let mut entry_block_offset = last_offset;
 
         let earliest_serial_needed = {
             let mut d = files[last_file_id.0 as usize].0.read(last_offset, STATIC_ENTRY_SIZE as usize)?;
@@ -277,18 +325,19 @@ pub(super) fn recover(
             LogEntrySerialNumber(entry.earliest_needed)
         };
 
-        while entry_serial <= earliest_serial_needed && entry_serial != LogEntrySerialNumber(0) {
+        while entry_serial >= earliest_serial_needed {
             let file = &files[file_id.0 as usize].0;
 
-            let mut d = file.read(entry_offset, STATIC_ENTRY_SIZE as usize)?;
+            let mut d = file.read(entry_block_offset, STATIC_ENTRY_SIZE as usize)?;
             let mut entry = encoding::decode_entry(&mut d)?;
 
             entry_serial = entry.serial;
 
-            let entry_data_size = entry.entry_offset as usize - entry_offset;
-            let entry_data_start = entry.entry_offset as usize;
-            
-            let mut entry_data = file.read(entry_data_start, entry_data_size)?;
+            //println!("Reading Entry {:?} entry_block_offset {} entry offset {}", entry_serial, entry_block_offset, entry.entry_offset);
+
+            let entry_data_size = entry_block_offset - entry.entry_offset as usize;
+
+            let mut entry_data = file.read(entry.entry_offset as usize, entry_data_size)?;
 
             encoding::load_entry_data(&mut entry_data, &mut entry, entry_serial)?;
 
@@ -312,8 +361,12 @@ pub(super) fn recover(
                 }
             }
 
+            if entry.previous_entry_location.offset < 16 {
+                break; // Cannot have an offset of 0 (first 16 bytes of the file are the UUID)
+            }
+
             file_id = entry.previous_entry_location.file_id;
-            entry_offset = entry.previous_entry_location.offset as usize;
+            entry_block_offset = entry.previous_entry_location.offset as usize;
         }
 
         let get_data = |file_location: &FileLocation| -> Result<ArcData> {
@@ -376,4 +429,64 @@ pub(super) fn recover(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use tempdir::TempDir;
+    use super::*;
 
+    
+
+    #[test]
+    fn initialization() {
+        let t = TempDir::new("test").unwrap();
+        let (l, o) = LogFile::new(t.path(), FileId(0), 50).unwrap();
+        let u = l.file_uuid;
+
+        assert!(o.is_none());
+
+        assert_eq!(l.len, 16);
+
+        let ru = pread_uuid(l.fd, 0).unwrap();
+
+        assert_eq!(u, ru);
+
+        unsafe {
+            let n = libc::lseek(l.fd, 0, libc::SEEK_END);
+            assert_eq!(n, 16);
+        }
+    }
+
+    #[test]
+    fn recycle() {
+        let t = TempDir::new("test").unwrap();
+        let (mut l, o) = LogFile::new(t.path(), FileId(0), 50).unwrap();
+        let u = l.file_uuid;
+
+        assert!(o.is_none());
+
+        assert_eq!(l.len, 16);
+
+        let ru = pread_uuid(l.fd, 0).unwrap();
+
+        assert_eq!(u, ru);
+
+        write_bytes(l.fd, &[1u8,2u8,3u8,4u8]).unwrap();
+
+        unsafe {
+            let n = libc::lseek(l.fd, 0, libc::SEEK_END);
+            assert_eq!(n, 20);
+        }
+
+        l.recycle().unwrap();
+
+        let ru = pread_uuid(l.fd, 0).unwrap();
+
+        assert_ne!(u, ru);
+        assert_eq!(l.file_uuid, ru);
+
+        unsafe {
+            let n = libc::lseek(l.fd, 0, libc::SEEK_END);
+            assert_eq!(n, 16);
+        }
+    }
+}

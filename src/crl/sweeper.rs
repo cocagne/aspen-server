@@ -48,8 +48,10 @@ pub(self) use self::file_stream::FileStream;
 pub fn recover(
     crl_directory: &Path, 
     entry_window_size: usize,
-    num_streams: usize) -> Result<Box<dyn crate::crl::Backend>, std::io::Error> {
-    let backend = backend::Backend::recover(crl_directory, entry_window_size, num_streams)?;
+    max_entry_operations: usize,
+    num_streams: usize,
+    max_file_size: usize) -> Result<Box<dyn crate::crl::Backend>, std::io::Error> {
+    let backend = backend::Backend::recover(crl_directory, entry_window_size, max_entry_operations, num_streams, max_file_size)?;
     Ok(Box::new(backend))
 }
 
@@ -68,6 +70,9 @@ const FILE_LOCATION_SIZE: u64 = 2 + 8 + 4;
 //     object_updates: Vec<transaction::ObjectUpdate>, 4:count (trailing data is num_updates * (16:objuuid + FileLocation))
 // }
 const STATIC_TX_SIZE: u64 = TXID_SIZE + FILE_LOCATION_SIZE + 1 + 11 + 4;
+
+// Update format is 16-byte object UUID + FileLocation
+const OBJECT_UPDATE_STATIC_SIZE: u64 = 16 + FILE_LOCATION_SIZE;
 
 /// Entry block always ends with:
 ///   entry_serial_number - 8

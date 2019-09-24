@@ -71,7 +71,7 @@ pub trait RequestCompletionHandler {
 
 /// Interface to the CRL backend implementation
 pub trait Backend {
-    fn shutdown(self);
+    fn shutdown(&mut self);
     
     /// Creates a new Crl trait object that will notify the supplied RequestCompletionHandler
     /// when requests complete
@@ -82,26 +82,26 @@ pub trait Backend {
 /// Represents the persistent state needed to recover a transaction after a crash
 #[derive(Clone, Eq, PartialEq)]
 pub struct TransactionRecoveryState {
-    store_id: store::Id,
-    serialized_transaction_description: ArcData,
-    object_updates: Vec<transaction::ObjectUpdate>,
-    tx_disposition: transaction::Disposition,
-    paxos_state: paxos::PersistentState
+    pub store_id: store::Id,
+    pub serialized_transaction_description: ArcData,
+    pub object_updates: Vec<transaction::ObjectUpdate>,
+    pub tx_disposition: transaction::Disposition,
+    pub paxos_state: paxos::PersistentState
 }
 
 /// Represents the persistent state needed to recover an allocation operation after a crash
 #[derive(Clone, Eq, PartialEq)]
 pub struct AllocationRecoveryState {
-    store_id: store::Id,
-    store_pointer: store::Pointer,
-    id: object::Id,
-    kind: object::Kind,
-    size: Option<u32>,
-    data: ArcDataSlice,
-    refcount: object::Refcount,
-    timestamp: hlc::Timestamp,
-    allocation_transaction_id: transaction::Id,
-    serialized_revision_guard: ArcDataSlice
+    pub store_id: store::Id,
+    pub store_pointer: store::Pointer,
+    pub id: object::Id,
+    pub kind: object::Kind,
+    pub size: Option<u32>,
+    pub data: ArcDataSlice,
+    pub refcount: object::Refcount,
+    pub timestamp: hlc::Timestamp,
+    pub allocation_transaction_id: transaction::Id,
+    pub serialized_revision_guard: ArcDataSlice
 }
 
 

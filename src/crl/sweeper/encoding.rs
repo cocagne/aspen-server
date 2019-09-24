@@ -21,6 +21,7 @@ pub(super) fn log_entry(
         let padding = pad_to_4k_alignment(offset as u64, data_sz, tail_sz);
 
         assert!(offset as u64 + data_sz + padding + tail_sz <= max_size as u64);
+        assert!((offset as u64 + data_sz + padding + tail_sz) % 4096 == 0);
 
         (file_id, file_uuid, offset, padding)
     };
@@ -440,14 +441,20 @@ fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
 
 /// Calculates the size required for the write.
 /// 
-/// Returns (size-of-pre-entry-data, 4k-alignment-padding-bytes, size-of-entry-block, number-of-data-buffers)
+/// Format
+/// 
+/// <data-buffers><4-k alignment padding><tail buffer>
+/// 
+/// Tail Buffer Format
+/// <entry content><static-entry-block>
+/// 
+/// Returns (size-of-pre-entry-data, size-of-entry-block, number-of-data-buffers)
 fn calculate_write_size(
     txs: &Vec<&RefCell<Tx>>, 
     allocs: &Vec<&RefCell<Alloc>>,
     tx_deletions: &Vec<TxId>,
     alloc_deletions: &Vec<TxId>) -> (u64, u64, usize) {
 
-    let mut update_count: u64 = 0;
     let mut buffer_count: usize = 0;
     let mut data: u64 = 0;
     let mut tail: u64 = STATIC_ENTRY_SIZE; 
@@ -462,16 +469,14 @@ fn calculate_write_size(
         if tx.data_locations.is_none() && ! tx.state.object_updates.is_empty() {
             for ou in &tx.state.object_updates {
                 data += ou.data.len() as u64;
-                update_count += 1;
                 buffer_count += 1;
             }
         }
+
+        let nupdates = tx.state.object_updates.len() as u64;
+
+        tail += STATIC_TX_SIZE + nupdates * OBJECT_UPDATE_STATIC_SIZE; 
     }
-
-    // Update format is 16-byte UUID + 14-byte FileLocation
-    tail += txs.len() as u64 * STATIC_TX_SIZE + update_count * (16 + FILE_LOCATION_SIZE);
-
-    tail += allocs.len() as u64 * STATIC_ARS_SIZE;
 
     for a in allocs {
         let a = a.borrow();
@@ -480,8 +485,11 @@ fn calculate_write_size(
             data += a.state.data.len() as u64;
             buffer_count += 1;
         }
+
+        let sp_len = a.state.store_pointer.len() as u64;
+        let guard_len = a.state.serialized_revision_guard.len() as u64;
         
-        tail += a.state.store_pointer.len() as u64 + a.state.serialized_revision_guard.len() as u64;
+        tail += STATIC_ARS_SIZE + sp_len + guard_len;
     }
 
     tail += tx_deletions.len() as u64 * TXID_SIZE;
@@ -594,6 +602,8 @@ mod tests {
 
         encode_tx_state(&tx1, &mut m);
 
+        assert_eq!(m.len() as u64, STATIC_TX_SIZE);
+
         m.set_offset(0);
 
         let mut r = Data::from(m);
@@ -652,6 +662,8 @@ mod tests {
         let mut m = DataMut::with_capacity(4096);
 
         encode_tx_state(&tx1, &mut m);
+
+        assert_eq!(m.len() as u64, STATIC_TX_SIZE + 2 * OBJECT_UPDATE_STATIC_SIZE);
 
         m.set_offset(0);
 
@@ -714,6 +726,7 @@ mod tests {
 
         encode_alloc_state(&alloc, &mut m);
 
+        assert_eq!(m.len() as u64, STATIC_ARS_SIZE + store_pointer.len() as u64 + srg.len() as u64);
         m.set_offset(0);
 
         let mut r = Data::from(m);
