@@ -20,6 +20,7 @@ use super::store;
 use super::transaction;
 
 pub mod sweeper;
+pub mod mock;
 
 #[derive(Debug)]
 struct DecodeError;

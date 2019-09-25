@@ -1,4 +1,10 @@
 
+Could use alternative store mechanism for in-memory objects. Similar to CRL, we stream to
+disk an operation log when content is updated in memory. Only when we purge the object
+from cache do we write back the value to the owning store.
+   |-> very similar to kernel file cache
+   |-> we'll just journal it so we can recover the cache state on startup
+
 FD needs wrapper with drop() overridden to close the file handle. or stream can do it.
 switch mod.rs -> module-name
 
