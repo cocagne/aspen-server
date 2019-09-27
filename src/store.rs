@@ -1,5 +1,52 @@
-
 use std::fmt;
+use std::cell::RefCell;
+use std::sync;
+
+use crate::object;
+
+pub mod mock;
+pub mod frontend;
+pub mod backend;
+pub mod messages;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ReadError {
+    NotFound
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ReadError::NotFound => write!(f, "NotFound"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PutError {
+    InvalidPointer
+}
+
+impl fmt::Display for PutError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PutError::InvalidPointer => write!(f, "InvalidPointer"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AllocationError {
+    NoSpace
+}
+
+impl fmt::Display for AllocationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AllocationError::NoSpace => write!(f, "NoSpace"),
+        }
+    }
+}
 
 /// Uniquely identifies a data store
 /// 
@@ -60,4 +107,52 @@ impl fmt::Display for Pointer {
         }?;
         Ok(())
     }
+}
+
+/// Pair of the object Id and optional store pointer
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Locater {
+    object_id: object::Id,
+    pointer: Pointer
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Crc32(u32);
+
+impl fmt::Display for Crc32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Crc32({})", self.0)
+    }
+}
+
+/// Represents the current state of an object
+#[derive(Debug, Clone)]
+pub struct State {
+    id: object::Id,
+    store_pointer: Pointer,
+    metadata: object::Metadata,
+    object_kind: object::Kind,
+    transaction_locked: bool,
+    data: sync::Arc<Vec<u8>>,
+    crc: Crc32,
+    max_size: Option<u32>
+}
+
+/// Public interface for object cache implementations
+pub trait ObjectCache {
+    fn get(&mut self, object_id: &object::Id) -> Option<Box<RefCell<State>>>;
+
+    /// Inserts the given State object and optionally displaces one from
+    /// the cache
+    fn insert(&mut self, state: Box<RefCell<State>>) -> Option<Box<RefCell<State>>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadState {
+    id: object::Id,
+    store_pointer: Pointer,
+    metadata: object::Metadata,
+    object_kind: object::Kind,
+    data: sync::Arc<Vec<u8>>,
+    crc: Crc32
 }

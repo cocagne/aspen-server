@@ -3,7 +3,7 @@ use std::fmt;
 /// Object UUID
 /// 
 /// Uniquely identifies an object
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct Id(pub uuid::Uuid);
 
 impl fmt::Display for Id {
@@ -74,38 +74,9 @@ impl fmt::Display for Kind {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Crc32(u32);
-
-impl fmt::Display for Crc32 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Crc32({})", self.0)
-    }
-}
-
-/// Represents the current state of an object
-#[derive(Debug)]
-pub struct State {
-    object_kind: Kind,
-    id: Id,
+#[derive(Debug, Copy, Clone)]
+pub struct Metadata {
     revision: Revision,
     refcount: Refcount,
     timestamp: crate::hlc::Timestamp,
-    store_pointer: super::store::Pointer,
-    crc: Crc32,
-    segments: Vec<std::sync::Arc<Vec<u8>>>
 }
-
-impl State {
-    pub fn size(&self) -> usize {
-        self.segments.iter().map(|v| v.len()).sum()
-    }
-}
-
-/// Public interface for object cache implementations
-pub trait Cache<'a> {
-  fn get(object_id: &Id) -> Option<&mut State>;
-
-  fn put(state: State);
-}
-

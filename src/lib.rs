@@ -4,6 +4,7 @@ extern crate uuid;
 pub mod crl;
 pub mod data;
 pub mod hlc;
+pub mod network;
 pub mod object;
 pub mod paxos;
 pub mod store;
