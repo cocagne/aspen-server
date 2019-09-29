@@ -8,6 +8,7 @@ pub mod mock;
 pub mod frontend;
 pub mod backend;
 pub mod messages;
+pub mod simple_cache;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReadError {
@@ -117,7 +118,7 @@ pub struct Locater {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Crc32(u32);
+pub struct Crc32(pub u32);
 
 impl fmt::Display for Crc32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,7 +141,7 @@ pub struct State {
 
 /// Public interface for object cache implementations
 pub trait ObjectCache {
-    fn get(&mut self, object_id: &object::Id) -> Option<Box<RefCell<State>>>;
+    fn get(&mut self, object_id: &object::Id) -> Option<&Box<RefCell<State>>>;
 
     /// Inserts the given State object and optionally displaces one from
     /// the cache

@@ -16,7 +16,7 @@ impl fmt::Display for Id {
 /// 
 /// Revisions contain the UUID of the last transaction to successfuly update the object
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub struct Revision(uuid::Uuid);
+pub struct Revision(pub uuid::Uuid);
 
 impl fmt::Display for Revision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,7 +76,7 @@ impl fmt::Display for Kind {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Metadata {
-    revision: Revision,
-    refcount: Refcount,
-    timestamp: crate::hlc::Timestamp,
+    pub revision: Revision,
+    pub refcount: Refcount,
+    pub timestamp: crate::hlc::Timestamp,
 }
