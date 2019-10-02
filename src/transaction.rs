@@ -2,6 +2,13 @@ use std::fmt;
 
 use crate::object;
 use crate::ArcDataSlice;
+use crate::hlc;
+use crate::network;
+use crate::store;
+
+pub mod requirements;
+
+pub use requirements::{TransactionRequirement, KeyRequirement, TimestampRequirement};
 
 /// Transaction UUID
 /// 
@@ -73,4 +80,20 @@ impl fmt::Display for Disposition {
 pub struct ObjectUpdate {
     pub object_id: object::Id,
     pub data: ArcDataSlice
+}
+
+#[derive(Debug, Clone)]
+pub struct SerializedFinalizationAction(pub ArcDataSlice);
+
+pub struct TransactionDescription {
+    pub id: Id,
+    //pub serialized_transaction_description: ArcDataSlice,
+    pub start_timestamp: hlc::Timestamp,
+    pub primary_object: object::Pointer,
+    pub designated_leader: u8,
+    pub requirements: Vec<TransactionRequirement>,
+    pub finalization_actions: Vec<SerializedFinalizationAction>,
+    pub originating_client: Option<network::ClientId>,
+    pub notify_on_resolution: Vec<store::Id>,
+    pub notes: Vec<String>
 }

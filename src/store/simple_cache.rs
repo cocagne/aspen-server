@@ -152,43 +152,47 @@ mod tests {
         
         (State {
             id: o1,
-            store_pointer: store::Pointer::None,
+            store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
             transaction_locked: false,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
-            max_size: None
+            max_size: None,
+            kv_state: None
         },
         State {
             id: o2,
-            store_pointer: store::Pointer::None,
+            store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
             transaction_locked: false,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
-            max_size: None
+            max_size: None,
+            kv_state: None
         },
         State {
             id: o3,
-            store_pointer: store::Pointer::None,
+            store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
             transaction_locked: false,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
-            max_size: None
+            max_size: None,
+            kv_state: None
         },
         State {
             id: o4,
-            store_pointer: store::Pointer::None,
+            store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
             transaction_locked: false,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
-            max_size: None
+            max_size: None,
+            kv_state: None
         },
         )
         

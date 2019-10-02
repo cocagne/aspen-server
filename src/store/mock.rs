@@ -43,13 +43,13 @@ impl backend::Backend for MockStore {
         let crc = Crc32(h.finalize());
         self.content.insert(id, Obj {
             id,
-            store_pointer: Pointer::None,
+            store_pointer: Pointer::None{pool_index: 0},
             metadata,
             object_kind,
             data,
             crc
         });
-        Ok(Pointer::None)
+        Ok(Pointer::None{pool_index: 0})
     }
 
     fn get(&mut self, locater: Locater) {

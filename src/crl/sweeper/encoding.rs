@@ -358,15 +358,17 @@ fn decode_alloc_state(buf: &mut Data, entry_serial: LogEntrySerialNumber) -> Res
 
             let nbytes = buf.get_u32_le() as usize;
 
-            if buf.remaining() < nbytes {
+            if buf.remaining() < nbytes + 1 {
                 return Err(DecodeError{});
             }
 
+            let pool_index = buf.get_u8();
+
             if nbytes == 0 {
-                store::Pointer::None
+                store::Pointer::None{pool_index}
             } 
-            else if nbytes <= 23 {
-                let mut content: [u8; 23] = [0; 23];
+            else if nbytes <= 22 {
+                let mut content: [u8; 22] = [0; 22];
 
                 let s = buf.get_slice(nbytes);
 
@@ -375,6 +377,7 @@ fn decode_alloc_state(buf: &mut Data, entry_serial: LogEntrySerialNumber) -> Res
                 }
                 
                 store::Pointer::Short {
+                    pool_index,
                     nbytes: nbytes as u8,
                     content
                 }
@@ -383,6 +386,7 @@ fn decode_alloc_state(buf: &mut Data, entry_serial: LogEntrySerialNumber) -> Res
                 let mut content: Vec<u8> = Vec::with_capacity(nbytes);
                 content.extend_from_slice(buf.get_slice(nbytes));
                 store::Pointer::Long {
+                    pool_index,
                     content
                 }
             }
@@ -424,14 +428,20 @@ fn encode_alloc_state(a: &Alloc, buf: &mut DataMut) {
     buf.put_u32_le(a.state.serialized_revision_guard.len() as u32);
     buf.put_slice(&a.state.serialized_revision_guard.as_bytes());
 
+
     match &a.state.store_pointer {
-        store::Pointer::None => buf.put_u32_le(0),
-        store::Pointer::Short{nbytes, content} => {
+        store::Pointer::None{pool_index} => {
+            buf.put_u32_le(0);
+            buf.put_u8(*pool_index);
+        }
+        store::Pointer::Short{pool_index, nbytes, content} => {
             buf.put_u32_le(*nbytes as u32);
+            buf.put_u8(*pool_index);
             buf.put_slice(&content[0..*(nbytes) as usize]);
         },
-        store::Pointer::Long{content} => {
+        store::Pointer::Long{pool_index, content} => {
             buf.put_u32_le(content.len() as u32);
+            buf.put_u8(*pool_index);
             buf.put_slice(content);
         }
     };
@@ -486,7 +496,7 @@ fn calculate_write_size(
             buffer_count += 1;
         }
 
-        let sp_len = a.state.store_pointer.len() as u64;
+        let sp_len = a.state.store_pointer.encoded_len() as u64;
         let guard_len = a.state.serialized_revision_guard.len() as u64;
         
         tail += STATIC_ARS_SIZE + sp_len + guard_len;
@@ -525,7 +535,7 @@ pub(super) fn alloc_write_size(alloc: &RefCell<Alloc>) -> usize {
     if a.data_location.is_none() {
         data += a.state.data.len();
     }
-    data += a.state.store_pointer.len();
+    data += a.state.store_pointer.encoded_len();
     data += a.state.serialized_revision_guard.len();
 
     data + STATIC_ARS_SIZE as usize
@@ -688,12 +698,12 @@ mod tests {
         let data_location = FileLocation { file_id: FileId(1), offset: 2,length: 3 };
         let ids = uuids();
         let txid = transaction::Id(ids[0]);
-        let mut sp_content: [u8; 23] = [0u8; 23];
+        let mut sp_content: [u8; 22] = [0u8; 22];
         sp_content[0] = 2;
         sp_content[1] = 2;
         sp_content[2] = 2;
         let sp_content = sp_content;
-        let store_pointer = store::Pointer::Short{nbytes: 3, content: sp_content};
+        let store_pointer = store::Pointer::Short{pool_index: 4, nbytes: 3, content: sp_content};
         let object_id = object::Id(ids[1]);
         let kind = object::Kind::KeyValue;
         let size = Some(10);
@@ -726,7 +736,7 @@ mod tests {
 
         encode_alloc_state(&alloc, &mut m);
 
-        assert_eq!(m.len() as u64, STATIC_ARS_SIZE + store_pointer.len() as u64 + srg.len() as u64);
+        assert_eq!(m.len() as u64, STATIC_ARS_SIZE + store_pointer.encoded_len() as u64 + srg.len() as u64);
         m.set_offset(0);
 
         let mut r = Data::from(m);

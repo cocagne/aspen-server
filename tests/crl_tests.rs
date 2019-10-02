@@ -201,8 +201,9 @@ fn recovery() {
     t.crl.drop_transaction_object_data(t.store_id, txid);
 
     let sp = store::Pointer::Short {
+        pool_index: 6,
         nbytes: 3,
-        content: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        content: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     };
     let kind = object::Kind::Data;
     let size = Some(5);

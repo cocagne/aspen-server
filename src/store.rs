@@ -77,22 +77,38 @@ impl fmt::Display for Id {
 /// allocating on the heap as a Vec<u8> would.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Pointer {
-    None,
+    None {
+        pool_index: u8
+    },
     Short {
+        pool_index: u8,
         nbytes: u8,
-        content: [u8; 23]
+        content: [u8; 22]
     },
     Long {
+        pool_index: u8,
         content: Vec<u8>
     }
 }
 
 impl Pointer {
-    pub fn len(&self) -> usize {
+    pub fn encoded_len(&self) -> usize {
+        self.content_len() + 1
+    }
+    
+    pub fn content_len(&self) -> usize {
         match self {
-            Pointer::None => 0,
+            Pointer::None{..} => 0,
             Pointer::Short{nbytes, ..} => *nbytes as usize,
-            Pointer::Long{content} => content.len()
+            Pointer::Long{content, ..} => content.len()
+        }
+    }
+
+    pub fn pool_index(&self) -> u8 {
+        match self {
+            Pointer::None{pool_index, ..} => *pool_index,
+            Pointer::Short{pool_index, ..} => *pool_index,
+            Pointer::Long{pool_index, ..} => *pool_index
         }
     }
 }
@@ -100,10 +116,10 @@ impl Pointer {
 impl fmt::Display for Pointer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Pointer::None => write!(f, "NoPointer"),
-            Pointer::Short{nbytes, content} => write!(f, "ShortPointer(len:{}, hash:{})", nbytes, 
+            Pointer::None{pool_index} => write!(f, "NoPointer(store:{})", pool_index),
+            Pointer::Short{pool_index, nbytes, content} => write!(f, "ShortPointer(store:{}, len:{}, hash:{})", pool_index, nbytes, 
               crate::util::quick_hash(&content[0 .. *nbytes as usize])),
-            Pointer::Long{content} => write!(f, "LongPointer(len:{}, hash:{})", content.len(), 
+            Pointer::Long{pool_index, content} => write!(f, "LongPointer(store:{}, len:{}, hash:{})", pool_index, content.len(), 
               crate::util::quick_hash(&content))
         }?;
         Ok(())
@@ -127,16 +143,23 @@ impl fmt::Display for Crc32 {
 }
 
 /// Represents the current state of an object
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct State {
-    id: object::Id,
-    store_pointer: Pointer,
-    metadata: object::Metadata,
-    object_kind: object::Kind,
-    transaction_locked: bool,
-    data: sync::Arc<Vec<u8>>,
-    crc: Crc32,
-    max_size: Option<u32>
+    pub id: object::Id,
+    pub store_pointer: Pointer,
+    pub metadata: object::Metadata,
+    pub object_kind: object::Kind,
+    pub transaction_locked: bool,
+    pub data: sync::Arc<Vec<u8>>,
+    pub crc: Crc32,
+    pub max_size: Option<u32>,
+    kv_state: Option<Box<object::KVObjectState>>
+}
+
+impl State {
+    pub fn kv_state(&mut self) -> Option<&Box<object::KVObjectState>> {
+        self.kv_state.as_ref()
+    }
 }
 
 /// Public interface for object cache implementations
