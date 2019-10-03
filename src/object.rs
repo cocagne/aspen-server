@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -245,5 +245,6 @@ pub struct KVObjectState {
     pub max: Option<Key>,
     pub left: Option<Key>,
     pub right: Option<Key>,
-    pub content: HashMap<Key, KVEntry>
+    pub content: HashMap<Key, KVEntry>,
+    pub no_existence_locks: HashSet<Key>
 }

@@ -61,6 +61,9 @@ pub enum KeyRequirement {
     Exists { 
         key: Key
     },
+    MayExist {
+        key: Key
+    },
     DoesNotExist {
         key: Key
     },
@@ -78,10 +81,12 @@ pub enum KeyRequirement {
     }
 }
 
+
 impl fmt::Display for KeyRequirement{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             KeyRequirement::Exists{key} => write!(f, "Exists({})", key),
+            KeyRequirement::MayExist{key} => write!(f, "MayExist({})", key),
             KeyRequirement::DoesNotExist{key} => write!(f, "DoesNotEqual({})", key),
             KeyRequirement::TimestampLessThan{key, timestamp} => write!(f, "TimestampLessThan({},{})", key, timestamp),
             KeyRequirement::TimestampGreaterThan{key, timestamp} => write!(f, "TimestampGreaterThan({},{})", key, timestamp),

@@ -63,7 +63,7 @@ pub fn check_requirements(
                  check_revision(get_state(&pointer)?, required_revision)?
             },
             TransactionRequirement::KeyValueUpdate{pointer, required_revision, key_requirements} => {
-                 check_kv_requirements(get_state(&pointer)?, required_revision, key_requirements)?
+                 check_kv_requirements(tx_id, get_state(&pointer)?, required_revision, key_requirements)?
             },
         }
     }
@@ -103,6 +103,7 @@ fn check_refcount(state: &TxStateRef, required_refcount: &object::Refcount) -> R
 }
 
 fn check_kv_requirements(
+    tx_id: transaction::Id,
     state: &TxStateRef,
     required_revision: &Option<object::Revision>,
     key_requirements: &Vec<KeyRequirement>) -> Result {
@@ -119,17 +120,48 @@ fn check_kv_requirements(
         object::Key::from_bytes(key.as_bytes())
     };
 
+    let check_lock = |e: &object::KVEntry| -> Result {
+        if let Some(locked_tx_id) = e.locked_to_transaction {
+            if locked_tx_id != tx_id {
+                return Err(ReqErr::TransactionCollision)
+            }
+        }
+        Ok(())
+    };
+
     if let Some(kv) = s.kv_state() {
         for r in key_requirements {
             match r {
                 KeyRequirement::Exists{key} => {
-                    if !kv.content.contains_key(&cvt(key)) {
-                        return Err(ReqErr::KeyExistenceError)
+                    let k = &cvt(key);
+
+                    match kv.content.get(&k) {
+                        None => return Err(ReqErr::KeyExistenceError),
+                        Some(s) => check_lock(s)?
+                    }
+                },
+                KeyRequirement::MayExist{key} => {
+                    let k = &cvt(key);
+
+                    match kv.content.get(&k) {
+                        None => {
+                            if kv.no_existence_locks.contains(&k) {
+                                return Err(ReqErr::TransactionCollision);
+                            }
+                        },
+                        Some(s) => check_lock(s)? 
                     }
                 },
                 KeyRequirement::DoesNotExist{key} => {
-                    if kv.content.contains_key(&cvt(key)) {
-                        return Err(ReqErr::KeyExistenceError)
+                    let k = &cvt(key);
+
+                    match kv.content.get(&k) {
+                        Some(_) => return Err(ReqErr::KeyExistenceError),
+                        None => {
+                            if kv.no_existence_locks.contains(&k) {
+                                return Err(ReqErr::TransactionCollision);
+                            }
+                        }
                     }
                 },
                 KeyRequirement::TimestampLessThan{key, timestamp} => {
@@ -139,6 +171,7 @@ fn check_kv_requirements(
                             if s.timestamp > *timestamp {
                                 return Err(ReqErr::KeyTimestampError)
                             }
+                            check_lock(s)?
                         }
                     }
                 },
@@ -149,6 +182,7 @@ fn check_kv_requirements(
                             if s.timestamp < *timestamp {
                                 return Err(ReqErr::KeyTimestampError)
                             }
+                            check_lock(s)?
                         }
                     }
                 },
@@ -159,6 +193,7 @@ fn check_kv_requirements(
                             if s.timestamp != *timestamp {
                                 return Err(ReqErr::KeyTimestampError)
                             }
+                            check_lock(s)?
                         }
                     }
                 },
@@ -175,7 +210,7 @@ fn check_kv_requirements(
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
     use std::sync;
 
@@ -582,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn key_exists() {
+    fn key_requirements() {
         let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
@@ -608,6 +643,8 @@ mod tests {
 
         let k1 = [0u8, 1u8];
         let k2 = [2u8, 3u8];
+        let k3 = [4u8, 5u8];
+        let k4 = [6u8, 7u8];
 
         let mut content: HashMap<object::Key, object::KVEntry> = HashMap::new();
 
@@ -617,6 +654,17 @@ mod tests {
             timestamp: hlc::Timestamp::from(2),
             locked_to_transaction: None
         });
+
+        content.insert(object::Key::from_bytes(&k4), object::KVEntry {
+            value: object::Value::from_bytes(&k2),
+            revision: object::Revision(revid),
+            timestamp: hlc::Timestamp::from(2),
+            locked_to_transaction: Some(transaction::Id(poolid))
+        });
+
+        let mut hs = HashSet::new();
+
+        hs.insert(object::Key::from_bytes(&k3));
 
         let s = store::State {
             id: object::Id(objid),
@@ -633,9 +681,12 @@ mod tests {
                 max: None,
                 left: None,
                 right: None,
-                content
+                content,
+                no_existence_locks: hs
             }))
         };
+
+        
 
         let txr = store::TxStateRef::new(&Rc::new(RefCell::new(s)));
 
@@ -663,6 +714,34 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k1) }
+            ]
+        }];
+
+        let r = check_requirements(txid, &reqs, &m);
+
+        assert!(r.is_ok());
+
+        //----------
+
+        let reqs = vec![TransactionRequirement::KeyValueUpdate{
+            pointer: p.clone(),
+            required_revision: None,
+            key_requirements: vec![
+                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k1) }
+            ]
+        }];
+
+        let r = check_requirements(txid, &reqs, &m);
+
+        assert!(r.is_ok());
+
+        //----------
+
+        let reqs = vec![TransactionRequirement::KeyValueUpdate{
+            pointer: p.clone(),
+            required_revision: None,
+            key_requirements: vec![
+                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k2) }
             ]
         }];
 
@@ -813,5 +892,33 @@ mod tests {
         let r = check_requirements(txid, &reqs, &m);
 
         assert_eq!(r, Err(ReqErr::KeyTimestampError));
+
+        //---------- Existence Updates
+
+        let reqs = vec![TransactionRequirement::KeyValueUpdate{
+            pointer: p.clone(),
+            required_revision: None,
+            key_requirements: vec![
+                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k4) }
+            ]
+        }];
+
+        let r = check_requirements(txid, &reqs, &m);
+
+        assert_eq!(r, Err(ReqErr::TransactionCollision));
+
+        //---------- Existence Updates
+
+        let reqs = vec![TransactionRequirement::KeyValueUpdate{
+            pointer: p.clone(),
+            required_revision: None,
+            key_requirements: vec![
+                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k3) }
+            ]
+        }];
+
+        let r = check_requirements(txid, &reqs, &m);
+
+        assert_eq!(r, Err(ReqErr::TransactionCollision));
     }
 }
