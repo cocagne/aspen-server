@@ -6,6 +6,7 @@ use crate::hlc;
 use crate::ida;
 use crate::pool;
 use crate::store;
+use crate::transaction;
 
 
 /// Object UUID
@@ -105,6 +106,7 @@ pub struct Metadata {
     pub timestamp: crate::hlc::Timestamp,
 }
 
+#[derive(Debug, Clone)]
 pub struct Pointer {
     pub id: Id,
     pub pool_id: pool::Id,
@@ -131,7 +133,11 @@ impl Key {
         if bytes.len() <= 23 {
             let len = bytes.len() as u8;
             let mut data = [0u8; 23];
-            data.copy_from_slice(bytes);
+            
+            for (dst, src) in data.iter_mut().zip(bytes.iter()) {
+                *dst = *src
+            }
+
             Key::Small {
                 len,
                 data
@@ -194,7 +200,11 @@ impl Value {
         if bytes.len() <= 23 {
             let len = bytes.len() as u8;
             let mut data = [0u8; 23];
-            data.copy_from_slice(bytes);
+            
+            for (dst, src) in data.iter_mut().zip(bytes.iter()) {
+                *dst = *src
+            }
+            
             Value::Small {
                 len,
                 data
@@ -222,24 +232,18 @@ impl Value {
 }
 
 #[derive(Debug)]
-pub struct KeyOnlyEntry {
-    pub key: Key,
-    pub revision: Revision,
-    pub timestamp: hlc::Timestamp
-}
-
-#[derive(Debug)]
 pub struct KVEntry {
     pub value: Value,
     pub revision: Revision,
-    pub timestamp: hlc::Timestamp
+    pub timestamp: hlc::Timestamp,
+    pub locked_to_transaction: Option<transaction::Id>
 }
 
 #[derive(Debug)]
 pub struct KVObjectState {
-    pub min: Option<KeyOnlyEntry>,
-    pub max: Option<KeyOnlyEntry>,
-    pub left: Option<KeyOnlyEntry>,
-    pub right: Option<KeyOnlyEntry>,
+    pub min: Option<Key>,
+    pub max: Option<Key>,
+    pub left: Option<Key>,
+    pub right: Option<Key>,
     pub content: HashMap<Key, KVEntry>
 }

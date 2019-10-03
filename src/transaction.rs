@@ -6,6 +6,7 @@ use crate::hlc;
 use crate::network;
 use crate::store;
 
+pub mod checker;
 pub mod requirements;
 
 pub use requirements::{TransactionRequirement, KeyRequirement, TimestampRequirement};
@@ -97,3 +98,4 @@ pub struct TransactionDescription {
     pub notify_on_resolution: Vec<store::Id>,
     pub notes: Vec<String>
 }
+

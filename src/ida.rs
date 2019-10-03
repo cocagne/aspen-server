@@ -1,3 +1,4 @@
+#[derive(Debug, Copy, Clone)]
 pub enum IDA {
     Replication {
         width: u8,

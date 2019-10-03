@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::store::{State, ObjectCache};
 use crate::object;
@@ -7,7 +8,7 @@ use crate::object;
 struct Entry {
     next: usize,
     prev: usize,
-    state: Box<RefCell<State>>
+    state: Rc<RefCell<State>>
 }
 
 pub struct SimpleCache {
@@ -32,7 +33,7 @@ impl SimpleCache {
 
 impl ObjectCache for SimpleCache {
 
-    fn get(&mut self, object_id: &object::Id) -> Option<&Box<RefCell<State>>> {
+    fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
         if self.entries.is_empty() {
             None
         }
@@ -68,7 +69,7 @@ impl ObjectCache for SimpleCache {
         }
     }
 
-    fn insert(&mut self, state: Box<RefCell<State>>) -> Option<Box<RefCell<State>>> {
+    fn insert(&mut self, state: Rc<RefCell<State>>) -> Option<Rc<RefCell<State>>> {
         
         if self.entries.is_empty() {    
             self.least_recently_used = 0;
@@ -98,7 +99,7 @@ impl ObjectCache for SimpleCache {
             // Index is full, need to pop an entry. However, we cannot pop objects locked
             // to transactions. So we'll use get() on them to put those at the head of
             // the list until a non-locked object occurs
-            while self.entries[self.least_recently_used].state.borrow().transaction_locked {
+            while self.entries[self.least_recently_used].state.borrow().transaction_references != 0 {
                 let object_id = self.entries[self.least_recently_used].state.borrow().id.clone();
                 self.get(&object_id);
             }
@@ -155,7 +156,8 @@ mod tests {
             store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
-            transaction_locked: false,
+            transaction_references: 0,
+            locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
             max_size: None,
@@ -166,7 +168,8 @@ mod tests {
             store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
-            transaction_locked: false,
+            transaction_references: 0,
+            locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
             max_size: None,
@@ -177,7 +180,8 @@ mod tests {
             store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
-            transaction_locked: false,
+            transaction_references: 0,
+            locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
             max_size: None,
@@ -188,7 +192,8 @@ mod tests {
             store_pointer: store::Pointer::None{pool_index: 0},
             metadata,
             object_kind: object::Kind::Data,
-            transaction_locked: false,
+            transaction_references: 0,
+            locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
             crc: store::Crc32(0),
             max_size: None,
@@ -207,10 +212,10 @@ mod tests {
         //let u3 = o3.id.clone();
         //let u4 = o3.id.clone();
 
-        let o1 = Box::new(RefCell::new(o1));
-        let o2 = Box::new(RefCell::new(o2));
-        let o3 = Box::new(RefCell::new(o3));
-        let o4 = Box::new(RefCell::new(o4));
+        let o1 = Rc::new(RefCell::new(o1));
+        let o2 = Rc::new(RefCell::new(o2));
+        let o3 = Rc::new(RefCell::new(o3));
+        let o4 = Rc::new(RefCell::new(o4));
 
         let mut c = SimpleCache::new(3);
 
@@ -233,10 +238,10 @@ mod tests {
         let u3 = o3.id.clone();
         //let u4 = o3.id.clone();
 
-        let o1 = Box::new(RefCell::new(o1));
-        let o2 = Box::new(RefCell::new(o2));
-        let o3 = Box::new(RefCell::new(o3));
-        let o4 = Box::new(RefCell::new(o4));
+        let o1 = Rc::new(RefCell::new(o1));
+        let o2 = Rc::new(RefCell::new(o2));
+        let o3 = Rc::new(RefCell::new(o3));
+        let o4 = Rc::new(RefCell::new(o4));
 
         let mut c = SimpleCache::new(3);
 
@@ -263,10 +268,10 @@ mod tests {
         let u3 = o3.id.clone();
         //let u4 = o3.id.clone();
 
-        let o1 = Box::new(RefCell::new(o1));
-        let o2 = Box::new(RefCell::new(o2));
-        let o3 = Box::new(RefCell::new(o3));
-        let o4 = Box::new(RefCell::new(o4));
+        let o1 = Rc::new(RefCell::new(o1));
+        let o2 = Rc::new(RefCell::new(o2));
+        let o3 = Rc::new(RefCell::new(o3));
+        let o4 = Rc::new(RefCell::new(o4));
 
         let mut c = SimpleCache::new(3);
 
@@ -292,13 +297,13 @@ mod tests {
         let u3 = o3.id.clone();
         //let u4 = o3.id.clone();
 
-        o1.transaction_locked = true;
-        o2.transaction_locked = true;
+        o1.transaction_references = 1;
+        o2.transaction_references = 1;
 
-        let o1 = Box::new(RefCell::new(o1));
-        let o2 = Box::new(RefCell::new(o2));
-        let o3 = Box::new(RefCell::new(o3));
-        let o4 = Box::new(RefCell::new(o4));
+        let o1 = Rc::new(RefCell::new(o1));
+        let o2 = Rc::new(RefCell::new(o2));
+        let o3 = Rc::new(RefCell::new(o3));
+        let o4 = Rc::new(RefCell::new(o4));
 
         let mut c = SimpleCache::new(3);
 

@@ -1,4 +1,9 @@
 
+Checker unit tests
+Then lock logic
+  - Be sure to handle DoesNotExist
+     |-> need placeholder & proper cleanup
+
 1. Tx Requirements Error Checking
 2. Key-Value object encode/decode
 3. Channel-based store handler threade

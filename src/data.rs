@@ -195,6 +195,18 @@ impl ArcDataSlice {
         }
     }
 
+    pub fn from_bytes(buff: &[u8]) -> ArcDataSlice {
+        let mut v = Vec::<u8>::with_capacity(buff.len());
+        
+        buff.iter().for_each(|b| v.push(*b));
+        
+        ArcDataSlice {
+            buffer: Arc::new(v),
+            begin: 0,
+            end: buff.len()
+        }
+    }
+
     pub fn new(adata: &ArcData, offset: usize, end: usize) -> ArcDataSlice {
         ArcDataSlice {
             buffer: adata.buffer.clone(),

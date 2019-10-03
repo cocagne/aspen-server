@@ -1,8 +1,11 @@
 use std::fmt;
 use std::cell::RefCell;
+use std::ops::Deref;
+use std::rc::Rc;
 use std::sync;
 
 use crate::object;
+use crate::transaction;
 
 pub mod mock;
 pub mod frontend;
@@ -95,7 +98,7 @@ impl Pointer {
     pub fn encoded_len(&self) -> usize {
         self.content_len() + 1
     }
-    
+
     pub fn content_len(&self) -> usize {
         match self {
             Pointer::None{..} => 0,
@@ -149,11 +152,17 @@ pub struct State {
     pub store_pointer: Pointer,
     pub metadata: object::Metadata,
     pub object_kind: object::Kind,
-    pub transaction_locked: bool,
+
+    /// Used to track the number of references currently working on this object
+    /// the object is not allowed to exit the cache until this number drops to 
+    /// zero. The TxStateRef smart-pointer wrapper is used to increment/decrement
+    /// this value.
+    pub transaction_references: u32,
+    pub locked_to_transaction: Option<transaction::Id>,
     pub data: sync::Arc<Vec<u8>>,
     pub crc: Crc32,
     pub max_size: Option<u32>,
-    kv_state: Option<Box<object::KVObjectState>>
+    pub kv_state: Option<Box<object::KVObjectState>>,
 }
 
 impl State {
@@ -162,13 +171,46 @@ impl State {
     }
 }
 
+/// Smart pointer for State objects that increment/decrement the state's
+/// transaction_references attribute when they are crated/deleted. Each
+/// transaction holding a reference to the object will do so though
+/// an instance of this class
+pub struct TxStateRef {
+    state: Rc<RefCell<State>>
+}
+
+impl TxStateRef {
+    pub fn new(state: &Rc<RefCell<State>>) -> TxStateRef {
+        state.borrow_mut().transaction_references += 1;
+        TxStateRef {
+            state: state.clone()
+        }
+    }
+}
+
+impl Drop for TxStateRef {
+    fn drop(&mut self) {
+        self.state.borrow_mut().transaction_references -= 1;
+    }
+}
+
+impl Deref for TxStateRef {
+    type Target = Rc<RefCell<State>>;
+
+    fn deref(&self) -> &Rc<RefCell<State>> {
+        &self.state
+    }
+}
+
+
+
 /// Public interface for object cache implementations
 pub trait ObjectCache {
-    fn get(&mut self, object_id: &object::Id) -> Option<&Box<RefCell<State>>>;
+    fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>>;
 
     /// Inserts the given State object and optionally displaces one from
     /// the cache
-    fn insert(&mut self, state: Box<RefCell<State>>) -> Option<Box<RefCell<State>>>;
+    fn insert(&mut self, state: Rc<RefCell<State>>) -> Option<Rc<RefCell<State>>>;
 }
 
 #[derive(Debug, Clone)]

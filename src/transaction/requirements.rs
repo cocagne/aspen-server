@@ -26,6 +26,16 @@ impl fmt::Display for TimestampRequirement {
 #[derive(Clone, Debug)]
 pub struct Key(ArcDataSlice);
 
+impl Key {
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub fn test_only_from_bytes(buff: &[u8]) -> Key {
+        Key(ArcDataSlice::from_bytes(buff))
+    }
+}
+
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", String::from_utf8_lossy(self.0.as_bytes()))
@@ -113,3 +123,4 @@ pub enum TransactionRequirement {
         key_requirements: Vec<KeyRequirement>
     }
 }
+
