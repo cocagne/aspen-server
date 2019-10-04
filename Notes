@@ -1,22 +1,18 @@
 
-Checker unit tests
-Then lock logic
-  - Be sure to handle DoesNotExist
-     |-> need placeholder & proper cleanup
 
-1. Tx Requirements Error Checking
-2. Key-Value object encode/decode
-3. Channel-based store handler threade
-    a. 2 channels, store backends and reader threads
+* Channel-based store manager 
+    * Implemented as a thread
+    * 2 channels
+        - Network threads - registration, read requests, & tx
+        - I/O threads for read/write
+
+TODO
+----
+    ** Need to check size of augmented KV object as part of Tx Locking.
 
 
-Transaction handling
-    - Only call Tx methods when all objects are loaded
-    - Pass all objects in hashmap to Tx
-    - Impl Tx stuff in Tx module, then tie into store Frontend
-
-Start from single-threaded store part. Assume channel-based Request/Reply for store
-backends.
+Backlog / Ideas
+---------------
 
 Could use alternative store mechanism for in-memory objects. Similar to CRL, we stream to
 disk an operation log when content is updated in memory. Only when we purge the object

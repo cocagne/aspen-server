@@ -9,6 +9,21 @@ pub struct DataMut {
 }
 
 #[derive(Eq, PartialEq, Debug)]
+pub struct RawData<'a> {
+    pub buffer: &'a [u8],
+    offset: usize
+}
+
+impl<'a> RawData<'a> {
+    pub fn new(buffer: &[u8]) -> RawData {
+        RawData {
+            buffer,
+            offset: 0
+        }
+    }
+}
+
+#[derive(Eq, PartialEq, Debug)]
 pub struct Data {
     pub buffer: Vec<u8>,
     offset: usize
@@ -57,6 +72,10 @@ pub trait DataReader {
 
     fn remaining(&self) -> usize {
         self.len() - self.offset()
+    }
+
+    fn remaining_bytes(&self) -> &[u8] {
+        &self.raw()[self.offset() ..]
     }
 
     fn incr_offset(&mut self, inc: usize) {
@@ -425,6 +444,20 @@ impl DataMut {
 impl DataReader for DataMut {
     fn raw(&self) -> &[u8] {
         &self.v
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn set_offset(&mut self, new_offset: usize) {
+        self.offset = new_offset;
+    }
+}
+
+impl<'a> DataReader for RawData<'a> {
+    fn raw(&self) -> &[u8] {
+        self.buffer
     }
 
     fn offset(&self) -> usize {

@@ -8,6 +8,7 @@ use crate::pool;
 use crate::store;
 use crate::transaction;
 
+pub mod kv_encoding;
 
 /// Object UUID
 /// 
@@ -231,7 +232,15 @@ impl Value {
     }
 }
 
-#[derive(Debug)]
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for Value {}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct KVEntry {
     pub value: Value,
     pub revision: Revision,
@@ -239,7 +248,7 @@ pub struct KVEntry {
     pub locked_to_transaction: Option<transaction::Id>
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct KVObjectState {
     pub min: Option<Key>,
     pub max: Option<Key>,

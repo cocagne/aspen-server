@@ -13,7 +13,7 @@ pub mod store;
 pub mod transaction;
 pub mod util;
 
-pub use data::{ArcData, ArcDataSlice, Data, DataMut, DataReader, SliceReader};
+pub use data::{ArcData, ArcDataSlice, RawData, Data, DataMut, DataReader, SliceReader};
 
 pub enum EncodingError {
     ValueOutOfRange

@@ -7,6 +7,7 @@ use crate::network;
 use crate::store;
 
 pub mod checker;
+pub mod locker;
 pub mod requirements;
 
 pub use requirements::{TransactionRequirement, KeyRequirement, TimestampRequirement};
