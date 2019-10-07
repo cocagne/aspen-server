@@ -45,6 +45,19 @@ pub struct Frontend {
 }
 
 impl Frontend {
+    pub fn new(
+        store_id: store::Id,
+        backend: Box<dyn Backend>,
+        object_cache: Box<dyn ObjectCache>) -> Frontend {
+        Frontend {
+            store_id, 
+            backend,
+            object_cache,
+            pr_cache: PRCache { vstack: Vec::new() },
+            pending_reads: HashMap::new()
+        }
+    }
+
     pub fn receive(&mut self, message: In) -> Option<Response> {
         match message {
             In::Read {

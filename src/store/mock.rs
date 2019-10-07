@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crc32fast::Hasher;
-use crossbeam::crossbeam_channel;
 
 use crate::object;
 use super::backend;
@@ -20,14 +19,14 @@ struct Obj {
 
 pub struct MockStore {
     store_id: store::Id,
-    completion_sender: crossbeam_channel::Sender<Completion>,
+    completion_handler: Box<dyn backend::CompletionHandler>,
     content: HashMap<object::Id, Obj>,
     put_id: u64
 }
 
 impl backend::Backend for MockStore {
-    fn set_completion_sender(&mut self, sender: crossbeam_channel::Sender<Completion>) {
-        self.completion_sender = sender;
+    fn set_completion_handler(&mut self, handler: Box<dyn backend::CompletionHandler>) {
+        self.completion_handler = handler;
     }
 
     fn allocate(
@@ -64,7 +63,7 @@ impl backend::Backend for MockStore {
                 crc: s.crc
             })
         };
-        let _ = self.completion_sender.send(Completion::Get{
+        let _ = self.completion_handler.complete(Completion::Get{
             store_id: self.store_id,
             object_id: locater.object_id,
             result
@@ -84,7 +83,7 @@ impl backend::Backend for MockStore {
             crc: state.crc
         });
 
-        let _ = self.completion_sender.send(Completion::Put{
+        let _ = self.completion_handler.complete(Completion::Put{
             store_id: self.store_id,
             object_id: state.id,
             put_id: PutId(put_id),

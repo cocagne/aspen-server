@@ -1,8 +1,6 @@
 
 use std::sync;
 
-use crossbeam::crossbeam_channel;
-
 use crate::object;
 use crate::store;
 
@@ -11,6 +9,11 @@ use super::{Pointer, AllocationError, Locater, State};
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct PutId(pub u64);
 
+pub trait CompletionHandler {
+    fn complete(&self, op: Completion);
+}
+
+#[derive(Debug)]
 pub enum Completion {
     Get {
         store_id: store::Id,
@@ -25,9 +28,18 @@ pub enum Completion {
     }
 }
 
+impl Completion {
+    pub fn store_id(&self) -> store::Id {
+        match self {
+            Completion::Get{store_id, ..} => *store_id,
+            Completion::Put{store_id, ..} => *store_id,
+        }
+    }
+}
+
 pub trait Backend {
 
-    fn set_completion_sender(&mut self, sender: crossbeam_channel::Sender<Completion>);
+    fn set_completion_handler(&mut self, handler: Box<dyn CompletionHandler>);
 
     fn allocate(
         &mut self,
