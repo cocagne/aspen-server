@@ -19,17 +19,15 @@ struct CHandler {
 }
 
 impl crl::RequestCompletionHandler for CHandler {
-    fn transaction_save_complete(&self, request_id: RequestId, success: bool) {
-        self.sender.send(Response {
-            request_id,
-            success
-        }).unwrap();
-    }
-    fn allocation_save_complete(&self, request_id: RequestId, success: bool) {
-        self.sender.send(Response {
-            request_id,
-            success
-        }).unwrap();
+    fn complete(&self, op: crl::Completion) {
+        match op {
+            crl::Completion::TransactionSave {request_id, success, ..} => {
+                self.sender.send(Response{request_id, success}).unwrap()
+            },
+            crl::Completion::AllocationSave {request_id, success, ..} => {
+                self.sender.send(Response{request_id, success}).unwrap()
+            },
+        }
     }
 }
 

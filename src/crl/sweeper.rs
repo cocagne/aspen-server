@@ -270,7 +270,7 @@ pub(self) struct RegisterClientResponse {
 }
 
 #[derive(Clone, Copy)]
-pub(self) struct ClientRequest(ClientId, RequestId);
+pub(self) struct ClientRequest(ClientId, store::Id, RequestId);
 
 #[derive(Clone)]
 pub(self) enum Request {

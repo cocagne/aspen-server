@@ -6,6 +6,7 @@ use crossbeam::crossbeam_channel;
 use crossbeam::crossbeam_channel::TryRecvError;
 
 use crate::crl::{RequestCompletionHandler, Crl};
+use crate::crl;
 use super::*;
 
 // Used to indicate that an entry is full and cannot accept any more data
@@ -639,8 +640,24 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                 // Run completion handlers for this entry
                 for cr in &entry.requests {
                     match cr {
-                        Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_save_complete(*request_id, success),
-                        Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_save_complete(*request_id, success)
+                        Completion::TxSave(client_id, store_id, request_id) => {
+                            state.completion_handlers[client_id.0].complete(
+                                crl::Completion::TransactionSave {
+                                    store_id: *store_id,
+                                    request_id: *request_id, 
+                                    success
+                                }
+                            )
+                        },
+                        Completion::AllocSave(client_id, store_id, request_id) => {
+                            state.completion_handlers[client_id.0].complete(
+                                crl::Completion::AllocationSave {
+                                    store_id: *store_id,
+                                    request_id: *request_id, 
+                                    success
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -656,8 +673,24 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                             let (psuccess, v) = t;
                             for cr in v {
                                 match cr {
-                                    Completion::TxSave(client_id, request_id) => state.completion_handlers[client_id.0].transaction_save_complete(request_id, psuccess),
-                                    Completion::AllocSave(client_id, request_id) => state.completion_handlers[client_id.0].allocation_save_complete(request_id, psuccess)
+                                    Completion::TxSave(client_id, store_id, request_id) => {
+                                        state.completion_handlers[client_id.0].complete(
+                                            crl::Completion::TransactionSave {
+                                                store_id,
+                                                request_id, 
+                                                success: psuccess
+                                            }
+                                        )
+                                    },
+                                    Completion::AllocSave(client_id, store_id, request_id) => {
+                                        state.completion_handlers[client_id.0].complete(
+                                            crl::Completion::AllocationSave {
+                                                store_id,
+                                                request_id, 
+                                                success: psuccess
+                                            }
+                                        )
+                                    }
                                 }
                             }
                             state.last_notified_serial = next;
@@ -674,8 +707,8 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
 
 #[derive(Copy, Clone)]
 enum Completion {
-    TxSave(ClientId, RequestId),
-    AllocSave(ClientId, RequestId)
+    TxSave(ClientId, store::Id, RequestId),
+    AllocSave(ClientId, store::Id, RequestId)
 }
 
 struct Entry {
@@ -743,7 +776,7 @@ impl Entry {
         if self.tx_set.contains(tx_id) {
             // Transaction is already part of this entry
             if let Some(cr) = req {
-                self.requests.push(Completion::TxSave(cr.0, cr.1));
+                self.requests.push(Completion::TxSave(cr.0, cr.1, cr.2));
             }
             return Ok(());
         } else {
@@ -755,7 +788,7 @@ impl Entry {
                 self.tx_set.insert(tx_id.clone());
                 self.size += esize;
                 if let Some(cr) = req {
-                    self.requests.push(Completion::TxSave(cr.0, cr.1));
+                    self.requests.push(Completion::TxSave(cr.0, cr.1, cr.2));
                 }
                 return Ok(());
             } else {
@@ -780,7 +813,7 @@ impl Entry {
             self.allocs.push(tx_id.clone());
             self.size += asize;
             if let Some(cr) = req {
-                self.requests.push(Completion::AllocSave(cr.0, cr.1));
+                self.requests.push(Completion::AllocSave(cr.0, cr.1, cr.2));
             }
             return Ok(());
         } else {

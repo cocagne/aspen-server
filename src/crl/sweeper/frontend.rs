@@ -48,7 +48,7 @@ impl crate::crl::Crl for Frontend {
         let request_id = self.next_request();
         
         self.sender.send(Request::SaveTransactionState{
-            client_request: ClientRequest(self.client_id, request_id),
+            client_request: ClientRequest(self.client_id, store_id, request_id),
             store_id,
             transaction_id,
             serialized_transaction_description,
@@ -97,7 +97,7 @@ impl crate::crl::Crl for Frontend {
     ) -> RequestId {
         let request_id = self.next_request();
         self.sender.send(Request::SaveAllocationState{
-            client_request: ClientRequest(self.client_id, request_id),
+            client_request: ClientRequest(self.client_id, store_id, request_id),
             state: AllocationRecoveryState {
                 store_id: store_id,
                 store_pointer: store_pointer,

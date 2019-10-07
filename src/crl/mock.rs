@@ -3,7 +3,8 @@ use std::sync;
 
 use crossbeam::crossbeam_channel;
 
-use crate::crl::{RequestCompletionHandler, Crl};
+use crate::crl::{RequestCompletionHandler, Crl, Completion};
+use crate::store;
 
 use super::*;
 
@@ -15,8 +16,8 @@ struct RegisterClientResponse {
 }
 
 enum Request {
-    Tx(ClientId, RequestId),
-    Alloc(ClientId, RequestId),
+    Tx(ClientId, store::Id, RequestId),
+    Alloc(ClientId, store::Id, RequestId),
     RegisterClientRequest {
         sender: crossbeam_channel::Sender<RegisterClientResponse>,
         handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>
@@ -43,8 +44,14 @@ fn io_thread(receiver: crossbeam_channel::Receiver<Request>) {
 
     loop {
         match receiver.recv().unwrap() {
-            Request::Tx(client, req) => clients[client.0].transaction_save_complete(req, true),
-            Request::Alloc(client, req) => clients[client.0].allocation_save_complete(req, true),
+            Request::Tx(client, store_id, request_id) => {
+                clients[client.0].complete(
+                    Completion::TransactionSave { store_id, request_id, success:true })
+            },
+            Request::Alloc(client, store_id, request_id) => {
+                clients[client.0].complete(
+                    Completion::AllocationSave { store_id, request_id, success:true })
+            },
             Request::RegisterClientRequest {
                 sender,
                 handler
@@ -111,7 +118,7 @@ impl crate::crl::Crl for Frontend {
 
     fn save_transaction_state(
         &mut self,
-        _store_id: store::Id,
+        store_id: store::Id,
         _transaction_id: transaction::Id,
         _serialized_transaction_description: ArcData,
         _object_updates: Option<Vec<transaction::ObjectUpdate>>,
@@ -121,7 +128,7 @@ impl crate::crl::Crl for Frontend {
         let request_id = self.next_request();
         
         // Explicitly ignore any errors
-        let _ = self.sender.send(Request::Tx(self.client_id, request_id)); 
+        let _ = self.sender.send(Request::Tx(self.client_id, store_id, request_id)); 
     
         request_id
     }
@@ -140,7 +147,7 @@ impl crate::crl::Crl for Frontend {
 
     fn save_allocation_state(
         &mut self,
-        _store_id: store::Id,
+        store_id: store::Id,
         _store_pointer: store::Pointer,
         _id: object::Id,
         _kind: object::Kind,
@@ -154,7 +161,7 @@ impl crate::crl::Crl for Frontend {
         let request_id = self.next_request();
 
         // Explicitly ignore any errors
-        let _ = self.sender.send(Request::Alloc(self.client_id, request_id));
+        let _ = self.sender.send(Request::Alloc(self.client_id, store_id, request_id));
 
         request_id
     }

@@ -57,6 +57,19 @@ impl From<DecodeError> for std::io::Error {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct RequestId(u64);
 
+pub enum Completion {
+    TransactionSave {
+        store_id: store::Id,
+        request_id: RequestId,
+        success: bool
+    },
+    AllocationSave {
+        store_id: store::Id,
+        request_id: RequestId,
+        success: bool
+    },
+}
+
 /// Used to notify completion of state save requests made to the Crash Recovery Log
 /// 
 /// Methods on the handler are called within the context of a CRL thread. Consequently,
@@ -66,8 +79,7 @@ pub struct RequestId(u64);
 /// the message type sent over the channel. The success arguemnt will be true if the
 /// state was successfully written to persistent media, false if an error occurred
 pub trait RequestCompletionHandler {
-    fn transaction_save_complete(&self, request_id: RequestId, success: bool);
-    fn allocation_save_complete(&self, request_id: RequestId, success: bool);
+    fn complete(&self, op: Completion);
 }
 
 /// Interface to the CRL backend implementation
