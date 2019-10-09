@@ -3,9 +3,11 @@
 
 pub mod learner;
 pub mod acceptor;
+pub mod proposer;
 
 pub use learner::Learner;
 pub use acceptor::Acceptor;
+pub use proposer::Proposer;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct ProposalId {
@@ -15,6 +17,15 @@ pub struct ProposalId {
     /// Identifies which peer that generated the proposal. This is used for tie-breaking
     /// and preventing collisions which could break the algorithm
     pub peer: u8
+}
+
+impl ProposalId {
+    pub fn initial_proposal_id(peer_id: u8) -> ProposalId {
+        ProposalId {
+            number: 1,
+            peer: peer_id
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -48,5 +59,6 @@ pub enum Message {
         proposal_value: bool
     }
 }
+
 
 
