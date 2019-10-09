@@ -10,6 +10,7 @@ use crate::transaction;
 pub mod mock;
 pub mod frontend;
 pub mod backend;
+pub mod manager;
 pub mod messages;
 pub mod simple_cache;
 

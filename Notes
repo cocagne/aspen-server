@@ -1,10 +1,14 @@
 
+* Add Tx management to Frontend
 
-* Channel-based store manager 
-    * Implemented as a thread
-    * 2 channels
-        - Network threads - registration, read requests, & tx
-        - I/O threads for read/write
+* Add CRL state load to Frontend
+    - Loading Tx state and loading object state from disk are key
+    - May want to do this with a completion handler rather than force all objects to be loaded
+      synchronously
+    - Should be able to read all objects in parallel. Backend model must support that
+      anyway.
+        - simplifies impl approach
+
 
 TODO
 ----
