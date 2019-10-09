@@ -2,8 +2,10 @@
 //! 
 
 pub mod learner;
+pub mod acceptor;
 
-pub use learner::{Learner};
+pub use learner::Learner;
+pub use acceptor::Acceptor;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct ProposalId {
@@ -21,7 +23,7 @@ pub struct PersistentState {
     pub accepted: Option<(ProposalId, bool)>
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Message {
     Prepare {
         proposal_id: ProposalId
