@@ -1,3 +1,37 @@
+* Tx receive Prepare, Accept, Accepted, Resolved, & Finalized messages
+    - Accepted allows for peer-to-peer coms for reduced delay to noticing resolution
+    
+* Pre-transaction rebuilds come with Prepare
+
+* Need Tx Resolution cache
+    - check this before starting new transaction
+
+* Need TxManager to be able to immediately respond to messages
+    - Prepare/Accepts for known-complete transactions
+
+* Need PrepareResponse/Promise cache
+    - Used for when Promises arrive before we notice we're the designated leader
+
+* For driving transactions, keep logic hidden behind a trait?
+    - Object has an Option<dyn TransactionDriver>
+    - Forwards all relevant messages to the TransactionDriver
+    - Driver then can be told tx is complete rather than figure it out
+    - Tx awaits TxFinalized message before dropping state
+
+* Store thread periodically receives CheckTxTimeouts
+    - Store iterates over all tx and calls dynamic trait's periodic_timeout_check()
+    - Allows for pluggable solutions / separation of concerns
+
+* Stores accept a TxDriverStrategy
+    - On Tx creation and heartbeat, call strategy.dont_check_until() -> SystemTimestamp
+    - If timestamp is exceeded during periodic check, call strategy.create_driver()
+    - Also use strategy.create_driver() if this is the designated leader
+
+
+------------
+
+* Refamiliarize Scala Transaction implementation
+   - Top to Bottom
 
 * Add Tx management to Frontend
 

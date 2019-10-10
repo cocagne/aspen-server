@@ -56,11 +56,9 @@ impl backend::Backend for MockStore {
             None => Err(ReadError::NotFound),
             Some(s) => Ok(ReadState {
                 id: s.id,
-                store_pointer: s.store_pointer.clone(),
                 metadata: s.metadata,
                 object_kind: s.object_kind,
                 data: s.data.clone(),
-                crc: s.crc
             })
         };
         let _ = self.completion_handler.complete(Completion::Get{

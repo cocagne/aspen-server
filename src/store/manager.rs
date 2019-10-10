@@ -23,13 +23,13 @@ pub enum ReadResponse {
     },
 }
 
-pub enum LoadResult {
+pub enum StoreLoadResult {
     Success(store::Id),
     Failure(store::Id, String)
 }
 
-pub trait LoadCompletionHandler {
-    fn complete(&self, result: LoadResult);
+pub trait StoreLoadCompletionHandler {
+    fn complete(&self, result: StoreLoadResult);
 }
 
 pub enum Message {
@@ -45,7 +45,7 @@ pub enum Message {
     LoadStore {
         store_id: store::Id,
         load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
-        handler: Box<dyn LoadCompletionHandler>
+        handler: Box<dyn StoreLoadCompletionHandler>
     }
 
 }
@@ -112,7 +112,7 @@ impl StoreManager {
         &mut self,
         store_id: store::Id, 
         load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
-        handler: Box<dyn LoadCompletionHandler>) {
+        handler: Box<dyn StoreLoadCompletionHandler>) {
 
         
     }

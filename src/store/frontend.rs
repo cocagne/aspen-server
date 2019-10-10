@@ -143,11 +143,9 @@ impl Frontend {
                 store_id,
                 result: Ok(store::ReadState {
                     id: s.id,
-                    store_pointer: s.store_pointer.clone(),
                     metadata: s.metadata,
                     object_kind: s.object_kind,
                     data: s.data.clone(),
-                    crc: s.crc
                 })
             };
 

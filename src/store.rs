@@ -217,9 +217,7 @@ pub trait ObjectCache {
 #[derive(Debug, Clone)]
 pub struct ReadState {
     id: object::Id,
-    store_pointer: Pointer,
     metadata: object::Metadata,
     object_kind: object::Kind,
     data: sync::Arc<Vec<u8>>,
-    crc: Crc32
 }
