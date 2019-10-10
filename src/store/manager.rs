@@ -59,14 +59,14 @@ impl StoreManager {
 
     fn handle_message(&mut self, msg: Message) {
         match msg  {
-            Message::IOCompletion(completion) => {
-                self.io_completion(completion)
+            Message::Read{client_id, request_id, store_id, locater} => {
+                self.read(client_id, request_id, &store_id, &locater)
             },
             Message::CRLCompletion(completion) => {
                 self.crl_completion(completion)
             },
-            Message::Read{client_id, request_id, store_id, locater} => {
-                self.read(client_id, request_id, &store_id, &locater)
+            Message::IOCompletion(completion) => {
+                self.io_completion(completion)
             },
             Message::LoadStore{store_id, load_fn, handler} => {
                 self.load_store(store_id, load_fn, handler)
