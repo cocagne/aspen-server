@@ -42,9 +42,9 @@ impl backend::Backend for MockStore {
         Ok(Pointer::None{pool_index: 0})
     }
 
-    fn get(&mut self, locater: Locater) {
+    fn get(&mut self, locater: &Locater) {
         let result = match self.content.get(&locater.object_id) {
-            None => Err(ReadError::NotFound),
+            None => Err(ReadError::ObjectNotFound),
             Some(s) => Ok(ReadState {
                 id: s.id,
                 metadata: s.metadata,
@@ -55,6 +55,7 @@ impl backend::Backend for MockStore {
         let _ = self.completion_handler.complete(Completion::Get{
             store_id: self.store_id,
             object_id: locater.object_id,
+            store_pointer: locater.pointer.clone(),
             result
         });
     }

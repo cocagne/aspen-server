@@ -1,16 +1,12 @@
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use super::backend::{Backend, Completion, PutId};
-use super::messages::{In, Out};
 use super::ObjectCache;
 use crate::network;
 use crate::store;
 use crate::object;
-
-pub enum Response {
-    Single(Out),
-    Multiple(Vec<Out>)
-}
 
 struct PendingRead {
     client_id: network::ClientId,
@@ -58,107 +54,97 @@ impl Frontend {
         }
     }
 
-    pub fn receive(&mut self, message: In) -> Option<Response> {
-        match message {
-            In::Read {
-                client_id,
-                request_id,
-                store_id,
-                locater
-            } => self.read(client_id, request_id, store_id, locater),
-        } 
+    pub fn id(&self) -> store::Id {
+        self.store_id
     }
 
-    pub fn complete(&mut self, completion: Completion) -> Option<Response> {
+    pub fn backend_complete(&mut self, net: &Box<dyn network::Messenger>, completion: Completion) {
         match completion {
             Completion::Get{
                 object_id,
+                store_pointer,
                 result,
                 ..
-            } => self.complete_get(object_id, result),
+            } => self.backend_complete_get(net, object_id, store_pointer, result),
 
             Completion::Put {
                 object_id,
                 put_id,
                 result,
                 ..
-            } => self.complete_put(object_id, put_id, result)
+            } => self.backend_complete_put(net, object_id, put_id, result)
         }
     }
 
-    fn complete_get(
+    fn backend_complete_get(
         &mut self,
+        net: &Box<dyn network::Messenger>,
         object_id: object::Id,
-        result: Result<store::ReadState, store::ReadError>) -> Option<Response> {
+        store_pointer: store::Pointer,
+        result: Result<store::ReadState, store::ReadError>) {
 
-        let store_id = self.store_id.clone();
+        let read_result = result.clone();
 
-        let out = |pr: &PendingRead| -> Out {
-            Out::Read {
-                client_id: pr.client_id.clone(),
-                request_id: pr.request_id.clone(),
-                store_id: store_id.clone(),
-                result: result.clone()
-            }
-        };
-        
-        if let Some(vpr) = self.pending_reads.remove(&object_id) {
+        if let Ok(state) = result {
 
-            let response = if vpr.len() == 1 {
-                Response::Single(out(&vpr[0]))
-            } else {
-                Response::Multiple(vpr.iter().map(out).collect())
+            let o = store::State {
+                id: object_id,
+                store_pointer,
+                metadata: state.metadata,
+                object_kind: state.object_kind,
+                transaction_references: 0,
+                locked_to_transaction: None,
+                data: state.data.clone(),
+                max_size: None,
+                kv_state: None,
             };
 
-            self.pr_cache.recycle(vpr);
-
-            Some(response)
-        } else {
-            None
+            self.object_cache.insert(Rc::new(RefCell::new(o)));
         }
+
+        if let Some(vpr) = self.pending_reads.remove(&object_id) {
+
+            for pr in vpr.iter() {
+                net.send_read_response(pr.client_id, pr.request_id, object_id, read_result.clone());
+            }
+
+            self.pr_cache.recycle(vpr);
+        } 
     }
 
-    fn complete_put(
+    fn backend_complete_put(
         &mut self,
+        _net: &Box<dyn network::Messenger>,
         _object_id: object::Id,
         _put_id: PutId,
-        _result: Result<(), store::PutError>) -> Option<Response> {
+        _result: Result<(), store::PutError>) {
         
         unimplemented!()
     }
 
-    fn read(
+    pub fn read(
         &mut self, 
+        net: &Box<dyn network::Messenger>,
         client_id: network::ClientId,
         request_id: network::RequestId,
-        store_id: store::Id,
-        locater: store::Locater) -> Option<Response> {
+        locater: &store::Locater) {
         
         if let Some(state) = self.object_cache.get(&locater.object_id) {
             let s = state.borrow();
 
-            let out = Out::Read {
-                client_id,
-                request_id,
-                store_id,
-                result: Ok(store::ReadState {
-                    id: s.id,
-                    metadata: s.metadata,
-                    object_kind: s.object_kind,
-                    data: s.data.clone(),
-                })
-            };
-
-            Some(Response::Single(out))
-
+            net.send_read_response(client_id, request_id, locater.object_id, Ok(store::ReadState {
+                id: s.id,
+                metadata: s.metadata,
+                object_kind: s.object_kind,
+                data: s.data.clone(),
+            }));
+            
         } else if let Some(vpr) = self.pending_reads.get_mut(&locater.object_id) {
 
             vpr.push(PendingRead{
                 client_id,
                 request_id
             });
-
-            None
 
         } else {
 
@@ -170,8 +156,6 @@ impl Frontend {
             self.pending_reads.insert(locater.object_id, vpr);
 
             self.backend.get(locater);
-
-            None
         }
     }
 }

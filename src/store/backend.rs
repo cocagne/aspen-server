@@ -18,6 +18,7 @@ pub enum Completion {
     Get {
         store_id: store::Id,
         object_id: object::Id,
+        store_pointer: Pointer,
         result: Result<store::ReadState, store::ReadError>
     },
     Put {
@@ -50,7 +51,7 @@ pub trait Backend {
         max_size: Option<u32>
     ) -> Result<Pointer, AllocationError>;
 
-    fn get(&mut self, locater: Locater);
+    fn get(&mut self, locater: &Locater);
 
     fn put(&mut self, state: State) -> PutId;
 }

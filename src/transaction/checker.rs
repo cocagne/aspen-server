@@ -261,7 +261,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: Some(transaction::Id(poolid)),
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -316,7 +315,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -373,7 +371,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -429,7 +426,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -485,7 +481,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -542,7 +537,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -599,7 +593,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         };
@@ -674,7 +667,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: Some(Box::new(object::KVObjectState{
                 min: None,

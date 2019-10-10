@@ -159,7 +159,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         },
@@ -171,7 +170,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         },
@@ -183,7 +181,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         },
@@ -195,7 +192,6 @@ mod tests {
             transaction_references: 0,
             locked_to_transaction: None,
             data: sync::Arc::new(vec![]),
-            crc: store::Crc32(0),
             max_size: None,
             kv_state: None
         },

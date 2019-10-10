@@ -10,18 +10,9 @@ use crossbeam::channel;
 
 use crate::crl;
 use crate::network;
-use crate::object;
 use crate::store;
 use crate::store::backend;
 use crate::store::frontend;
-
-pub enum ReadResponse {
-    Get {
-        request_id: network::RequestId,
-        object_id: object::Id,
-        result: Result<store::ReadState, store::ReadError>
-    },
-}
 
 pub enum StoreLoadResult {
     Success(store::Id),
@@ -35,7 +26,6 @@ pub trait StoreLoadCompletionHandler {
 pub enum Message {
     IOCompletion(backend::Completion),
     CRLCompletion(crl::Completion),
-    RegisterReader(channel::Sender<ReadResponse>),
     Read {
         client_id: network::ClientId,
         request_id: network::RequestId,
@@ -53,8 +43,8 @@ pub enum Message {
 pub struct StoreManager {
     receiver: channel::Receiver<Message>,
     stores: HashMap<store::Id, frontend::Frontend>,
-    readers: HashMap<network::ClientId, channel::Sender<ReadResponse>>,
-    crl: Box<dyn crl::Crl>,
+    _crl: Box<dyn crl::Crl>,
+    net: Box<dyn network::Messenger>
 }
 
 impl StoreManager {
@@ -76,10 +66,7 @@ impl StoreManager {
                 self.crl_completion(completion)
             },
             Message::Read{client_id, request_id, store_id, locater} => {
-                self.read(client_id, request_id, store_id, locater)
-            },
-            Message::RegisterReader(sender) => {
-                self.register_reader(sender)
+                self.read(client_id, request_id, &store_id, &locater)
             },
             Message::LoadStore{store_id, load_fn, handler} => {
                 self.load_store(store_id, load_fn, handler)
@@ -88,10 +75,12 @@ impl StoreManager {
     }
 
     fn io_completion(&mut self, completion: backend::Completion) {
-
+        if let Some(store) = self.stores.get_mut(&completion.store_id()) {
+            store.backend_complete(&self.net, completion);
+        }
     }
 
-    fn crl_completion(&mut self, completion: crl::Completion) {
+    fn crl_completion(&mut self, _completion: crl::Completion) {
 
     }
 
@@ -99,20 +88,23 @@ impl StoreManager {
         &mut self,
         client_id: network::ClientId,
         request_id: network::RequestId,
-        store_id: store::Id,
-        locater: store::Locater) {
+        store_id: &store::Id,
+        locater: &store::Locater) {
 
-    }
-
-    fn register_reader(&mut self, sender: channel::Sender<ReadResponse>) {
-
+        match self.stores.get_mut(store_id) {
+            Some(store) => store.read(&self.net, client_id, request_id, locater),
+            None => {
+                self.net.send_read_response(client_id, request_id, locater.object_id, 
+                    Err(store::ReadError::StoreNotFound));
+            }
+        }
     }
 
     fn load_store(
         &mut self,
-        store_id: store::Id, 
-        load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
-        handler: Box<dyn StoreLoadCompletionHandler>) {
+        _store_id: store::Id, 
+        _load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
+        _handler: Box<dyn StoreLoadCompletionHandler>) {
 
         
     }

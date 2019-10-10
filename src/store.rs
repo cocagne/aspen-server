@@ -11,18 +11,19 @@ pub mod mock;
 pub mod frontend;
 pub mod backend;
 pub mod manager;
-pub mod messages;
 pub mod simple_cache;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReadError {
-    NotFound
+    StoreNotFound,
+    ObjectNotFound
 }
 
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ReadError::NotFound => write!(f, "NotFound"),
+            ReadError::StoreNotFound => write!(f, "StoreNotFound"),
+            ReadError::ObjectNotFound => write!(f, "ObjectNotFound"),
         }
     }
 }
@@ -161,7 +162,6 @@ pub struct State {
     pub transaction_references: u32,
     pub locked_to_transaction: Option<transaction::Id>,
     pub data: sync::Arc<Vec<u8>>,
-    pub crc: Crc32,
     pub max_size: Option<u32>,
     pub kv_state: Option<Box<object::KVObjectState>>,
 }
