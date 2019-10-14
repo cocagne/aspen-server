@@ -1,6 +1,38 @@
+* Add max_object_size() to DataStore backend, proxy call through Frontend
+    - Allows easy size checking during req checks 
+    - Size in pointer is for the client
+    - Size should be available in the StoragePool object too
+
+* Need to define how transaction must work before trying to code it
+
+* Start with resolution & finalized messages
+    - These define the end state 
+    - Use this to trigger the commit process
+    - Add tests
+
+* Next add support for learner learning of resolution
+    - With and without having local updates
+    - Add tests
+
+* Add support for prepare messages
+    - only update timestamp with pid > 2 (see comments in scala)
+
+-----------------------------
+* Need base transaction implementation
+    - Will allow full integration test
+    - Need to wait till all objects for Tx are loaded into memory
+
+    * Represent as a separate struct
+    * store maintains a hashmap of Tx instances
+        - store owns the transaction
+
+* Tx is enum of PreLoad and Loaded
+    * Buffers content till loaded
+
+
 * Tx receive Prepare, Accept, Accepted, Resolved, & Finalized messages
     - Accepted allows for peer-to-peer coms for reduced delay to noticing resolution
-    
+
 * Pre-transaction rebuilds come with Prepare
 
 * Need Tx Resolution cache

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::result;
 
+use crate::ArcDataSlice;
 use crate::hlc;
 use crate::object;
 use crate::store::TxStateRef;
@@ -15,6 +16,7 @@ pub enum ReqErr {
     TransactionCollision,
     LocalTimeError,
     MissingObject,
+    MissingObjectUpdate,
     ObjectTypeError,
     RevisionMismatch,
     RefcountMismatch,
@@ -25,7 +27,8 @@ pub enum ReqErr {
 pub fn check_requirements(
     tx_id: transaction::Id,
     requirements: &Vec<TransactionRequirement>,
-    objects: &HashMap<object::Id, TxStateRef>) -> Result {
+    objects: &HashMap<object::Id, TxStateRef>,
+    object_updates: &HashMap<object::Id, ArcDataSlice>) -> Result {
     
     let get_state = |ptr: &object::Pointer| -> result::Result<&TxStateRef, ReqErr> {
         match objects.get(&ptr.id) {
@@ -60,10 +63,16 @@ pub fn check_requirements(
                  check_refcount(get_state(&pointer)?, required_refcount)?
             },
             TransactionRequirement::DataUpdate{pointer, required_revision, ..} => {
-                 check_revision(get_state(&pointer)?, required_revision)?
+                 check_revision(get_state(&pointer)?, required_revision)?;
+                 if ! object_updates.contains_key(&pointer.id) {
+                     return Err(ReqErr::MissingObjectUpdate);
+                 }
             },
             TransactionRequirement::KeyValueUpdate{pointer, required_revision, key_requirements} => {
-                 check_kv_requirements(tx_id, get_state(&pointer)?, required_revision, key_requirements)?
+                 check_kv_requirements(tx_id, get_state(&pointer)?, required_revision, key_requirements)?;
+                 if ! object_updates.contains_key(&pointer.id) {
+                     return Err(ReqErr::MissingObjectUpdate);
+                 }
             },
         }
     }
@@ -272,7 +281,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::TransactionCollision));
     }
@@ -326,7 +338,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
     }
@@ -382,9 +397,71 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::RevisionMismatch));
+    }
+
+    #[test]
+    fn missing_object_update() {
+        let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid2 = uuid::Uuid::parse_str("06cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let sp0 = store::Pointer::None{pool_index: 0};
+        let sp1 = store::Pointer::None{pool_index: 1};
+
+        let txid = transaction::Id(txid);
+
+        let metadata = object::Metadata {
+            revision: object::Revision(revid),
+            refcount: object::Refcount{update_serial: 0, count: 1},
+            timestamp: hlc::Timestamp::from(1)
+        };
+
+        let p = object::Pointer {
+            id: object::Id(objid),
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0, sp1]
+        };
+
+        let reqs = vec![TransactionRequirement::DataUpdate{
+            pointer: p,
+            required_revision: object::Revision(revid),
+            operation: object::DataUpdateOperation::Overwrite
+        }];
+
+        let s = store::State {
+            id: object::Id(objid),
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+
+        let txr = store::TxStateRef::new(&Rc::new(RefCell::new(s)));
+
+        assert_eq!(txr.borrow().transaction_references, 1);
+
+        let mut m = HashMap::new();
+        m.insert(object::Id(objid), txr);
+
+        let mut u = HashMap::new();
+        //u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
+
+        assert_eq!(r, Err(ReqErr::MissingObjectUpdate));
     }
 
     #[test]
@@ -437,7 +514,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
     }
@@ -492,7 +572,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::RefcountMismatch));
     }
@@ -548,7 +631,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
     }
@@ -604,7 +690,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::LocalTimeError));
     }
@@ -695,7 +784,10 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -709,7 +801,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -723,7 +815,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -737,7 +829,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -751,7 +843,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::RevisionMismatch));
 
@@ -765,7 +857,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::KeyExistenceError));
 
@@ -779,7 +871,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -796,7 +888,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -813,7 +905,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::KeyTimestampError));
 
@@ -830,7 +922,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -847,7 +939,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::KeyTimestampError));
 
@@ -864,7 +956,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert!(r.is_ok());
 
@@ -881,7 +973,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::KeyTimestampError));
 
@@ -895,7 +987,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::TransactionCollision));
 
@@ -909,7 +1001,7 @@ mod tests {
             ]
         }];
 
-        let r = check_requirements(txid, &reqs, &m);
+        let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::TransactionCollision));
     }
