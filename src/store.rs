@@ -29,14 +29,14 @@ impl fmt::Display for ReadError {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum PutError {
+pub enum CommitError {
     InvalidPointer
 }
 
-impl fmt::Display for PutError {
+impl fmt::Display for CommitError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            PutError::InvalidPointer => write!(f, "InvalidPointer"),
+            CommitError::InvalidPointer => write!(f, "InvalidPointer"),
         }
     }
 }

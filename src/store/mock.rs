@@ -42,7 +42,7 @@ impl backend::Backend for MockStore {
         Ok(Pointer::None{pool_index: 0})
     }
 
-    fn get(&mut self, locater: &Locater) {
+    fn read(&mut self, locater: &Locater) {
         let result = match self.content.get(&locater.object_id) {
             None => Err(ReadError::ObjectNotFound),
             Some(s) => Ok(ReadState {
@@ -52,7 +52,7 @@ impl backend::Backend for MockStore {
                 data: s.data.clone(),
             })
         };
-        let _ = self.completion_handler.complete(Completion::Get{
+        let _ = self.completion_handler.complete(Completion::Read{
             store_id: self.store_id,
             object_id: locater.object_id,
             store_pointer: locater.pointer.clone(),
@@ -60,7 +60,7 @@ impl backend::Backend for MockStore {
         });
     }
 
-    fn put(&mut self, state: State, txid: transaction::Id) {
+    fn commit(&mut self, state: State, txid: transaction::Id) {
         
         self.content.insert(state.id, Obj {
             id : state.id,
@@ -69,7 +69,7 @@ impl backend::Backend for MockStore {
             data: state.data.clone(),
         });
 
-        let _ = self.completion_handler.complete(Completion::Put{
+        let _ = self.completion_handler.complete(Completion::Commit{
             store_id: self.store_id,
             object_id: state.id,
             txid,

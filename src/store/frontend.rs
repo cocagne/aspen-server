@@ -61,23 +61,23 @@ impl Frontend {
 
     pub fn backend_complete(&mut self, net: &Box<dyn network::Messenger>, completion: Completion) {
         match completion {
-            Completion::Get{
+            Completion::Read{
                 object_id,
                 store_pointer,
                 result,
                 ..
-            } => self.backend_complete_get(net, object_id, store_pointer, result),
+            } => self.backend_complete_read(net, object_id, store_pointer, result),
 
-            Completion::Put {
+            Completion::Commit {
                 object_id,
                 txid,
                 result,
                 ..
-            } => self.backend_complete_put(net, object_id, txid, result)
+            } => self.backend_complete_commit(net, object_id, txid, result)
         }
     }
 
-    fn backend_complete_get(
+    fn backend_complete_read(
         &mut self,
         net: &Box<dyn network::Messenger>,
         object_id: object::Id,
@@ -113,12 +113,12 @@ impl Frontend {
         } 
     }
 
-    fn backend_complete_put(
+    fn backend_complete_commit(
         &mut self,
         _net: &Box<dyn network::Messenger>,
         _object_id: object::Id,
         _txid: transaction::Id,
-        _result: Result<(), store::PutError>) {
+        _result: Result<(), store::CommitError>) {
         
         unimplemented!()
     }
@@ -156,7 +156,7 @@ impl Frontend {
             });
             self.pending_reads.insert(locater.object_id, vpr);
 
-            self.backend.get(locater);
+            self.backend.read(locater);
         }
     }
 }

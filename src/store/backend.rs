@@ -13,25 +13,25 @@ pub trait CompletionHandler {
 
 #[derive(Debug)]
 pub enum Completion {
-    Get {
+    Read {
         store_id: store::Id,
         object_id: object::Id,
         store_pointer: Pointer,
         result: Result<store::ReadState, store::ReadError>
     },
-    Put {
+    Commit {
         store_id: store::Id,
         object_id: object::Id,
         txid: transaction::Id,
-        result: Result<(), store::PutError>
+        result: Result<(), store::CommitError>
     }
 }
 
 impl Completion {
     pub fn store_id(&self) -> store::Id {
         match self {
-            Completion::Get{store_id, ..} => *store_id,
-            Completion::Put{store_id, ..} => *store_id,
+            Completion::Read{store_id, ..} => *store_id,
+            Completion::Commit{store_id, ..} => *store_id,
         }
     }
 }
@@ -49,7 +49,7 @@ pub trait Backend {
         max_size: Option<u32>
     ) -> Result<Pointer, AllocationError>;
 
-    fn get(&mut self, locater: &Locater);
+    fn read(&mut self, locater: &Locater);
 
-    fn put(&mut self, state: State, txid: transaction::Id);
+    fn commit(&mut self, state: State, txid: transaction::Id);
 }
