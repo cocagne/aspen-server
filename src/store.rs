@@ -167,8 +167,8 @@ pub struct State {
 }
 
 impl State {
-    pub fn kv_state(&mut self) -> Option<&Box<object::KVObjectState>> {
-        self.kv_state.as_ref()
+    pub fn kv_state(&mut self) -> Option<&mut Box<object::KVObjectState>> {
+        self.kv_state.as_mut()
     }
 }
 

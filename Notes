@@ -1,3 +1,10 @@
+* Simplify applyer.rs logic
+    - Add get_objects_with_errors() method to checker.rs
+        - Similar to orig but don't exit on 1sr error. Instead check each
+          requirement and add object ID to HashSet if error
+    - Applyer then calls get_objects_with_errors and skips each update
+      that referrs to an object in the err set
+
 * Add max_object_size() to DataStore backend, proxy call through Frontend
     - Allows easy size checking during req checks 
     - Size in pointer is for the client

@@ -257,3 +257,26 @@ pub struct KVObjectState {
     pub content: HashMap<Key, KVEntry>,
     pub no_existence_locks: HashSet<Key>
 }
+
+#[derive(Debug)]
+pub enum KVOpCode {
+    SetMinCode      = 0, // Replicated
+    SetMaxCode      = 1, // Replicated
+    SetLeftCode     = 2, // IDA-encoded
+    SetRightCode    = 3, // IDA-encoded
+    InsertCode      = 4, // IDA-encoded value
+    DeleteCode      = 5, // Not stored
+    DeleteMinCode   = 6, // Not stored
+    DeleteMaxCode   = 7, // Not stored
+    DeleteLeftCode  = 8, // Not stored
+    DeleteRightCode = 9, // Not stored
+}
+
+#[derive(Debug)]
+pub struct KVOperation {
+    pub operation: KVOpCode,
+    pub key: Key,
+    pub value: Value,
+    pub timestamp: hlc::Timestamp,
+    pub revision: Revision
+}

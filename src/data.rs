@@ -2,6 +2,8 @@
 use std::sync::Arc;
 use std::ops;
 
+use integer_encoding::*;
+
 #[derive(Debug)]
 pub struct DataMut {
     v: Vec<u8>,
@@ -170,6 +172,20 @@ pub trait DataReader {
         let mut ubytes: [u8; 16] = [0; 16];
         self.copy_to_slice(&mut ubytes);
         uuid::Uuid::from_bytes(ubytes)
+    }
+
+    fn get_varint(&mut self) -> usize {
+        let (value, varint_sz) = usize::decode_var(self.remaining_bytes());
+        self.incr_offset(varint_sz);
+        value
+    }
+
+    fn get_varint_prefixed_slice(&mut self,) -> &[u8] {
+        let nbytes = self.get_varint();
+        let o = self.offset();
+        self.incr_offset(nbytes);
+        let s = &self.raw()[o .. o+nbytes];
+        s
     }
 }
 

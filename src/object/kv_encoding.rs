@@ -174,6 +174,152 @@ pub fn decode(buf: &[u8]) -> Result<object::KVObjectState, CorruptedObject> {
     })
 }
 
+/**
+ * Encoding Format:
+ *    Sequence of: <code>[16-byte object-revision][8-byte timestamp]<varint-data-len><data>
+ *    
+ *    <code> is a bitmask with the highest bit being "Has Revision" and second highest being "Has Timestamp". The
+ *           remainder is the kind of encoded entry.
+ */
+pub fn decode_operations(
+    encoded_ops: &[u8],
+    tx_timestamp: hlc::Timestamp,
+    tx_revision: object::Revision) -> Vec<object::KVOperation> {
+
+    let mut d = RawData::new(encoded_ops);
+    let mut v = Vec::new();
+    
+    while d.remaining() != 0 {
+        decode_op(&mut d, tx_timestamp, tx_revision, &mut v);
+    }
+
+    v
+}
+const HAS_REVISION_MASK:u8  = 1u8 << 7;
+const HAS_TIMESTAMP_MASK:u8 = 1u8 << 6;
+const CODE_MASK:u8          = 0xFFu8 & !(HAS_REVISION_MASK | HAS_TIMESTAMP_MASK);
+
+fn decode_op(
+    b: &mut RawData, 
+    tx_timestamp: hlc::Timestamp,
+    tx_revision: object::Revision,
+    v: &mut Vec<object::KVOperation>) {
+
+    let mask = b.get_u8();
+
+    let revision = if mask & HAS_REVISION_MASK != 0 { 
+        object::Revision(b.get_uuid()) 
+    } else { 
+        tx_revision 
+    };
+
+    let timestamp = if mask & HAS_TIMESTAMP_MASK != 0 {
+        hlc::Timestamp::from(b.get_u64_be())
+    } else {
+        tx_timestamp
+    };
+
+    match mask & CODE_MASK {
+        x if x == object::KVOpCode::SetMinCode      as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::SetMinCode,
+                key: object::Key::from_bytes(b.get_varint_prefixed_slice()),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::SetMaxCode      as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::SetMaxCode,
+                key: object::Key::from_bytes(b.get_varint_prefixed_slice()),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::SetLeftCode     as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::SetLeftCode,
+                key: object::Key::from_bytes(b.get_varint_prefixed_slice()),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::SetRightCode    as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::SetRightCode,
+                key: object::Key::from_bytes(b.get_varint_prefixed_slice()),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::InsertCode      as u8 => {
+            let data_len = b.get_varint();
+            let key_len = b.get_varint();
+            let val_len = data_len - key_len;
+            let key = object::Key::from_bytes(b.get_slice(key_len));
+            let value = object::Value::from_bytes(b.get_slice(val_len));
+
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::SetRightCode,
+                key,
+                value,
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::DeleteCode      as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::DeleteCode,
+                key: object::Key::from_bytes(b.get_varint_prefixed_slice()),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::DeleteMinCode   as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::DeleteMinCode,
+                key: object::Key::from_bytes(&[]),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::DeleteMaxCode   as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::DeleteMaxCode,
+                key: object::Key::from_bytes(&[]),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::DeleteLeftCode  as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::DeleteLeftCode,
+                key: object::Key::from_bytes(&[]),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        x if x == object::KVOpCode::DeleteRightCode as u8 => {
+            v.push(object::KVOperation{
+                operation: object::KVOpCode::DeleteLeftCode,
+                key: object::Key::from_bytes(&[]),
+                value: object::Value::from_bytes(&[]),
+                timestamp,
+                revision
+            });
+        },
+        _ => ()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

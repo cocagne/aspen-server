@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::result;
 
 use crate::ArcDataSlice;
@@ -78,6 +78,97 @@ pub fn check_requirements(
     }
 
     Ok(())
+}
+
+pub fn get_objects_with_errors(
+    tx_id: transaction::Id,
+    requirements: &Vec<TransactionRequirement>,
+    objects: &HashMap<object::Id, TxStateRef>,
+    object_updates: &HashMap<object::Id, ArcDataSlice>) -> HashSet<object::Id> {
+    
+    let mut oerrs = HashSet::new();
+
+    let get_state = |ptr: &object::Pointer| -> result::Result<&TxStateRef, ReqErr> {
+        match objects.get(&ptr.id) {
+            Some(o) => {
+                match o.borrow().locked_to_transaction {
+                    None => Ok(o),
+                    Some(id) => {
+                        if id == tx_id {
+                            Ok(o)
+                        } else {
+                            Err(ReqErr::TransactionCollision)
+                        }
+                    }
+                }
+            },
+            None => Err(ReqErr::MissingObject)
+        }
+    };
+
+    for r in requirements {
+        let x = match r {
+            TransactionRequirement::LocalTime{..} => {
+                Ok(())
+            },
+            TransactionRequirement::RevisionLock{pointer, required_revision} => {
+                match get_state(&pointer) {
+                    Err(_) => Err(pointer.id),
+                    Ok(obj) => {
+                        check_revision(obj, required_revision).map_err(|_| pointer.id)
+                    }
+                }
+            },
+            TransactionRequirement::VersionBump{pointer, required_revision} => {
+                match get_state(&pointer) {
+                    Err(_) => Err(pointer.id),
+                    Ok(obj) => {
+                        check_revision(obj, required_revision).map_err(|_| pointer.id)
+                    }
+                }
+            },
+            TransactionRequirement::RefcountUpdate{pointer, required_refcount, ..} => {
+                match get_state(&pointer) {
+                    Err(_) => Err(pointer.id),
+                    Ok(obj) => {
+                        check_refcount(obj, required_refcount).map_err(|_| pointer.id)
+                    }
+                }
+            },
+            TransactionRequirement::DataUpdate{pointer, required_revision, ..} => {
+                if ! object_updates.contains_key(&pointer.id) {
+                    Err(pointer.id)
+                } else {
+                    match get_state(&pointer) {
+                        Err(_) => Err(pointer.id),
+                        Ok(obj) => {
+                            check_revision(obj, required_revision).map_err(|_| pointer.id)
+                        }
+                    }
+                }
+            },
+            TransactionRequirement::KeyValueUpdate{pointer, required_revision, key_requirements} => {
+                if ! object_updates.contains_key(&pointer.id) {
+                    Err(pointer.id)
+                } else {
+                    match get_state(&pointer) {
+                        Err(_) => Err(pointer.id),
+                        Ok(obj) => {
+                            check_kv_requirements(tx_id, obj, required_revision, 
+                                key_requirements).map_err(|_| pointer.id)
+                        }
+                    }
+                }
+            },
+        };
+
+        match x {
+            Ok(_) => true,
+            Err(obj_id) => oerrs.insert(obj_id)
+        };
+    }
+
+    oerrs
 }
 
 fn check_localtime(requirement: &TimestampRequirement) -> Result {
@@ -409,7 +500,6 @@ mod tests {
     fn missing_object_update() {
         let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
-        let revid2 = uuid::Uuid::parse_str("06cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let objid = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
         let sp0 = store::Pointer::None{pool_index: 0};
@@ -456,7 +546,7 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(object::Id(objid), txr);
 
-        let mut u = HashMap::new();
+        let u = HashMap::new();
         //u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
 
         let r = check_requirements(txid, &reqs, &m, &u);
@@ -1004,5 +1094,187 @@ mod tests {
         let r = check_requirements(txid, &reqs, &m, &u);
 
         assert_eq!(r, Err(ReqErr::TransactionCollision));
+    }
+
+    #[test]
+    fn get_object_errors_none() {
+        let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        //let revid2 = uuid::Uuid::parse_str("06cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid2 = uuid::Uuid::parse_str("05cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let sp0 = store::Pointer::None{pool_index: 0};
+        let sp1 = store::Pointer::None{pool_index: 1};
+
+        let txid = transaction::Id(txid);
+
+        let metadata = object::Metadata {
+            revision: object::Revision(revid),
+            refcount: object::Refcount{update_serial: 0, count: 1},
+            timestamp: hlc::Timestamp::from(1)
+        };
+
+        let p = object::Pointer {
+            id: object::Id(objid),
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0.clone(), sp1.clone()]
+        };
+
+        let p2 = object::Pointer {
+            id: object::Id(objid2),
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0, sp1]
+        };
+
+        let reqs = vec![
+            TransactionRequirement::DataUpdate{
+                pointer: p,
+                required_revision: object::Revision(revid),
+                operation: object::DataUpdateOperation::Overwrite
+            },
+            TransactionRequirement::DataUpdate{
+                pointer: p2,
+                required_revision: object::Revision(revid),
+                operation: object::DataUpdateOperation::Overwrite
+            }
+        ];
+
+        let s = store::State {
+            id: object::Id(objid),
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+        let s2 = store::State {
+            id: object::Id(objid2),
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+
+        let txr = store::TxStateRef::new(&Rc::new(RefCell::new(s)));
+        let txr2 = store::TxStateRef::new(&Rc::new(RefCell::new(s2)));
+
+        assert_eq!(txr.borrow().transaction_references, 1);
+
+        let mut m = HashMap::new();
+        m.insert(object::Id(objid), txr);
+        m.insert(object::Id(objid2), txr2);
+
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+        u.insert(object::Id(objid2), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = get_objects_with_errors(txid, &reqs, &m, &u);
+
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn get_object_errors_one() {
+        let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid2 = uuid::Uuid::parse_str("06cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid2 = uuid::Uuid::parse_str("05cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let sp0 = store::Pointer::None{pool_index: 0};
+        let sp1 = store::Pointer::None{pool_index: 1};
+
+        let txid = transaction::Id(txid);
+
+        let metadata = object::Metadata {
+            revision: object::Revision(revid),
+            refcount: object::Refcount{update_serial: 0, count: 1},
+            timestamp: hlc::Timestamp::from(1)
+        };
+
+        let p = object::Pointer {
+            id: object::Id(objid),
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0.clone(), sp1.clone()]
+        };
+
+        let p2 = object::Pointer {
+            id: object::Id(objid2),
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0, sp1]
+        };
+
+        let reqs = vec![
+            TransactionRequirement::DataUpdate{
+                pointer: p,
+                required_revision: object::Revision(revid),
+                operation: object::DataUpdateOperation::Overwrite
+            },
+            TransactionRequirement::DataUpdate{
+                pointer: p2,
+                required_revision: object::Revision(revid2),
+                operation: object::DataUpdateOperation::Overwrite
+            }
+        ];
+
+        let s = store::State {
+            id: object::Id(objid),
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+        let s2 = store::State {
+            id: object::Id(objid2),
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+
+        let txr = store::TxStateRef::new(&Rc::new(RefCell::new(s)));
+        let txr2 = store::TxStateRef::new(&Rc::new(RefCell::new(s2)));
+
+        assert_eq!(txr.borrow().transaction_references, 1);
+
+        let mut m = HashMap::new();
+        m.insert(object::Id(objid), txr);
+        m.insert(object::Id(objid), txr2);
+
+        let mut u = HashMap::new();
+        u.insert(object::Id(objid), ArcDataSlice::from_vec(vec![0u8]));
+        u.insert(object::Id(objid2), ArcDataSlice::from_vec(vec![0u8]));
+
+        let r = get_objects_with_errors(txid, &reqs, &m, &u);
+
+        assert_eq!(r.len(), 1);
+
+        let oid2 = object::Id(objid2);
+
+        assert!(r.contains(&oid2));
     }
 }
