@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use crate::object;
 use super::backend;
-use super::backend::{Completion, PutId};
+use super::backend::Completion;
 use crate::store;
+use crate::transaction;
 use super::*;
 
 struct Obj {
@@ -17,7 +18,6 @@ pub struct MockStore {
     store_id: store::Id,
     completion_handler: Box<dyn backend::CompletionHandler>,
     content: HashMap<object::Id, Obj>,
-    put_id: u64
 }
 
 impl backend::Backend for MockStore {
@@ -60,10 +60,8 @@ impl backend::Backend for MockStore {
         });
     }
 
-    fn put(&mut self, state: State) -> PutId {
-        let put_id = self.put_id;
-        self.put_id += 1;
-
+    fn put(&mut self, state: State, txid: transaction::Id) {
+        
         self.content.insert(state.id, Obj {
             id : state.id,
             metadata: state.metadata,
@@ -74,10 +72,8 @@ impl backend::Backend for MockStore {
         let _ = self.completion_handler.complete(Completion::Put{
             store_id: self.store_id,
             object_id: state.id,
-            put_id: PutId(put_id),
+            txid,
             result: Ok(())
         });
-
-        PutId(put_id)
     }
 }

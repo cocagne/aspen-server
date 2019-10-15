@@ -3,11 +3,9 @@ use std::sync;
 
 use crate::object;
 use crate::store;
+use crate::transaction;
 
 use super::{Pointer, AllocationError, Locater, State};
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct PutId(pub u64);
 
 pub trait CompletionHandler {
     fn complete(&self, op: Completion);
@@ -24,7 +22,7 @@ pub enum Completion {
     Put {
         store_id: store::Id,
         object_id: object::Id,
-        put_id: PutId,
+        txid: transaction::Id,
         result: Result<(), store::PutError>
     }
 }
@@ -53,5 +51,5 @@ pub trait Backend {
 
     fn get(&mut self, locater: &Locater);
 
-    fn put(&mut self, state: State) -> PutId;
+    fn put(&mut self, state: State, txid: transaction::Id);
 }

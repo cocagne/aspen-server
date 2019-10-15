@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::backend::{Backend, Completion, PutId};
+use super::backend::{Backend, Completion};
 use super::ObjectCache;
 use crate::network;
 use crate::store;
+use crate::transaction;
 use crate::object;
 
 struct PendingRead {
@@ -69,10 +70,10 @@ impl Frontend {
 
             Completion::Put {
                 object_id,
-                put_id,
+                txid,
                 result,
                 ..
-            } => self.backend_complete_put(net, object_id, put_id, result)
+            } => self.backend_complete_put(net, object_id, txid, result)
         }
     }
 
@@ -116,7 +117,7 @@ impl Frontend {
         &mut self,
         _net: &Box<dyn network::Messenger>,
         _object_id: object::Id,
-        _put_id: PutId,
+        _txid: transaction::Id,
         _result: Result<(), store::PutError>) {
         
         unimplemented!()
