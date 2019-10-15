@@ -226,7 +226,6 @@ impl ArcDataSlice {
             buffer: Arc::new(v),
             begin: 0,
             end: end
-
         }
     }
 
