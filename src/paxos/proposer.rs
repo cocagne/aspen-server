@@ -1,4 +1,4 @@
-use super::{ProposalId, Message};
+use super::*;
 
 pub struct Proposer {
     peer_id: u8,
@@ -89,8 +89,8 @@ impl Proposer {
         self.proposal_id
     }
 
-    pub fn current_prepare_message(&self) -> Message {
-        Message::Prepare {
+    pub fn current_prepare_message(&self) -> Prepare {
+        Prepare {
             proposal_id: self.proposal_id
         }
     }
@@ -99,8 +99,8 @@ impl Proposer {
     /// have a value to propose. 
     ///   
     /// The value may come either from the local proposal or from a peer via the Paxos proposal requirement
-    pub fn current_accept_message(&self) -> Option<Message> {
-        self.proposal_value().map( |v| Message::Accept {
+    pub fn current_accept_message(&self) -> Option<Accept> {
+        self.proposal_value().map( |v| Accept {
             proposal_id: self.proposal_id,
             proposal_value: v
         })
@@ -166,12 +166,12 @@ mod tests {
     #[test]
     fn update_proposal_id() {
         let mut p = Proposer::new(0, 3, 2);
-        assert_eq!(p.current_prepare_message(), Message::Prepare {
+        assert_eq!(p.current_prepare_message(), Prepare {
             proposal_id: ProposalId::initial_proposal_id(0) 
         });
         p.update_highest_proposal_id(ProposalId{number: 4, peer: 3});
         p.next_round();
-        assert_eq!(p.current_prepare_message(), Message::Prepare {
+        assert_eq!(p.current_prepare_message(), Prepare {
             proposal_id: ProposalId { number: 5, peer: 0 }
         });
     }
@@ -201,7 +201,7 @@ mod tests {
         p.receive_promise(1, ProposalId { number: 1, peer: 0 }, None);
         assert_eq!(p.prepare_quorum_reached(), true);
 
-        assert_eq!(p.current_accept_message(), Some(Message::Accept {
+        assert_eq!(p.current_accept_message(), Some(Accept {
             proposal_id: ProposalId { number: 1, peer: 0 },
             proposal_value: true
         }));
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(p.prepare_quorum_reached(), true);
         assert_eq!(p.current_accept_message(), None);
         p.set_local_proposal(false);
-        assert_eq!(p.current_accept_message(), Some(Message::Accept {
+        assert_eq!(p.current_accept_message(), Some(Accept {
             proposal_id: ProposalId { number: 1, peer: 0 },
             proposal_value: false
         }));
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(p.current_accept_message(), None);
         p.receive_promise(1, ProposalId { number: 1, peer: 0 }, None);
         assert_eq!(p.prepare_quorum_reached(), true);
-        assert_eq!(p.current_accept_message(), Some(Message::Accept {
+        assert_eq!(p.current_accept_message(), Some(Accept {
             proposal_id: ProposalId { number: 1, peer: 0 },
             proposal_value: false
         }));
@@ -285,7 +285,7 @@ mod tests {
         p.receive_promise(1, ProposalId { number: 2, peer: 0 }, 
             Some((ProposalId{ number: 1, peer: 1}, false)));
         assert_eq!(p.prepare_quorum_reached(), true);
-        assert_eq!(p.current_accept_message(), Some(Message::Accept {
+        assert_eq!(p.current_accept_message(), Some(Accept {
             proposal_id: ProposalId { number: 2, peer: 0 },
             proposal_value: false
         }));
@@ -304,7 +304,7 @@ mod tests {
         p.receive_promise(1, ProposalId { number: 2, peer: 0 }, 
             Some((ProposalId{ number: 1, peer: 1}, false)));
         assert_eq!(p.prepare_quorum_reached(), true);
-        assert_eq!(p.current_accept_message(), Some(Message::Accept {
+        assert_eq!(p.current_accept_message(), Some(Accept {
             proposal_id: ProposalId { number: 2, peer: 0 },
             proposal_value: false
         }));

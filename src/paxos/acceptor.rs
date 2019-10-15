@@ -1,4 +1,4 @@
-use super::{Message, ProposalId, PersistentState};
+use super::*;
 
 pub struct Acceptor {
     peer_id: u8,
@@ -17,7 +17,7 @@ impl Acceptor {
         }
     }
 
-    pub fn receive_prepare(&mut self, proposal_id: ProposalId) -> Message {
+    pub fn receive_prepare(&mut self, proposal_id: ProposalId) -> Result<Promise, Nack> {
 
         let promised = self.state.promised;
 
@@ -26,11 +26,11 @@ impl Acceptor {
                 promised: Some(proposal_id),
                 accepted: self.state.accepted
             };
-            Message::Promise {
+            Ok(Promise {
                 from_peer: self.peer_id,
                 proposal_id,
                 last_accepted: self.state.accepted
-            }
+            })
         };
 
         match promised {
@@ -39,17 +39,20 @@ impl Acceptor {
                 if proposal_id >= promised_id {
                     promise()
                 } else {
-                    Message::Nack { 
+                    Err(Nack { 
                         from_peer: self.peer_id,
                         proposal_id,
                         promised_proposal_id: promised_id
-                    }
+                    })
                 }
             }
         }
     }
 
-    pub fn receive_accept(&mut self, proposal_id: ProposalId, proposal_value: bool) -> Message {
+    pub fn receive_accept(
+        &mut self, 
+        proposal_id: ProposalId, 
+        proposal_value: bool) -> Result<Accepted, Nack> {
 
         let promised = self.state.promised;
 
@@ -58,11 +61,11 @@ impl Acceptor {
                 promised: Some(proposal_id),
                 accepted: Some((proposal_id, proposal_value))
             };
-            Message::Accepted {
+            Ok(Accepted {
                 from_peer: self.peer_id,
                 proposal_id,
                 proposal_value
-            }
+            })
         };
 
         match promised {
@@ -71,11 +74,11 @@ impl Acceptor {
                 if proposal_id >= promised_id {
                     accept()
                 } else {
-                    Message::Nack {
+                    Err(Nack {
                         from_peer: self.peer_id,
                         proposal_id,
                         promised_proposal_id: promised_id
-                    }
+                    })
                 }
             }
         }
@@ -107,11 +110,11 @@ mod tests {
 
         assert_eq!(
             a.receive_prepare(pid),
-            Message::Promise {
+            Ok(Promise {
                 from_peer: 0,
                 proposal_id: pid,
                 last_accepted: None
-            }
+            })
         );
 
         assert_eq!(a.state, PersistentState{
@@ -129,19 +132,19 @@ mod tests {
 
         assert_eq!(
             a.receive_prepare(pid1),
-            Message::Promise {
+            Ok(Promise {
                 from_peer: 0,
                 proposal_id: pid1,
                 last_accepted: None
-            }
+            })
         );
         assert_eq!(
             a.receive_prepare(pid2),
-            Message::Promise {
+            Ok(Promise {
                 from_peer: 0,
                 proposal_id: pid2,
                 last_accepted: None
-            }
+            })
         );
 
         assert_eq!(a.state, PersistentState{
@@ -159,19 +162,19 @@ mod tests {
 
         assert_eq!(
             a.receive_prepare(pid2),
-            Message::Promise {
+            Ok(Promise {
                 from_peer: 0,
                 proposal_id: pid2,
                 last_accepted: None
-            }
+            })
         );
         assert_eq!(
             a.receive_prepare(pid1),
-            Message::Nack {
+            Err(Nack {
                 from_peer: 0,
                 proposal_id: pid1,
                 promised_proposal_id: pid2
-            }
+            })
         );
 
         assert_eq!(a.state, PersistentState{
@@ -188,11 +191,11 @@ mod tests {
 
         assert_eq!(
             a.receive_accept(pid, true),
-            Message::Accepted {
+            Ok(Accepted {
                 from_peer: 0,
                 proposal_id: pid,
                 proposal_value: true
-            }
+            })
         );
         assert_eq!(a.state, PersistentState{
             promised: Some(pid),
@@ -209,19 +212,19 @@ mod tests {
 
         assert_eq!(
             a.receive_accept(pid1, true),
-            Message::Accepted {
+            Ok(Accepted {
                 from_peer: 0,
                 proposal_id: pid1,
                 proposal_value: true
-            }
+            })
         );
         assert_eq!(
             a.receive_accept(pid2, false),
-            Message::Accepted {
+            Ok(Accepted {
                 from_peer: 0,
                 proposal_id: pid2,
                 proposal_value: false
-            }
+            })
         );
         assert_eq!(a.state, PersistentState{
             promised: Some(pid2),
@@ -238,19 +241,19 @@ mod tests {
 
         assert_eq!(
             a.receive_accept(pid2, false),
-            Message::Accepted {
+            Ok(Accepted {
                 from_peer: 0,
                 proposal_id: pid2,
                 proposal_value: false
-            }
+            })
         );
         assert_eq!(
             a.receive_accept(pid1, true),
-            Message::Nack {
+            Err(Nack {
                 from_peer: 0,
                 proposal_id: pid1,
                 promised_proposal_id: pid2
-            }
+            })
         );
         
         assert_eq!(a.state, PersistentState{

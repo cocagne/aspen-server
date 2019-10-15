@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use time;
 
 use crate::data::{ArcData, ArcDataSlice};
+use crate::network;
 use crate::object;
 use crate::paxos;
 use crate::store;
@@ -72,19 +73,23 @@ impl Tx {
         return self.ofinalized;
     }
 
+    pub fn receive_prepare(&mut self, m: Prepare, net: &Box<dyn network::Messenger>) {
+
+    }
+
     pub fn receive_finalized(&mut self, value: bool) {
         self.ofinalized = Some(value);
-        self.on_resolution(value);
+        self.on_resolution(value)
     }
 
     pub fn receive_resolved(&mut self, value: bool) {
-        self.on_resolution(value);
+        self.on_resolution(value)
     }
 
-    pub fn on_resolution(&mut self, value:bool) {
+    fn on_resolution(&mut self, value:bool) {
         if self.oresolution.is_none() {
             self.oresolution = Some(value);
-        }
+        } 
     }
 
 }
