@@ -158,6 +158,8 @@ fn apply_kv_updates(
             },
         }
     }
+
+    s.data = Arc::new(kv_encoding::encode(kv));
 }
 
 #[cfg(test)]
