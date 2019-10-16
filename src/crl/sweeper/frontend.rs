@@ -6,7 +6,6 @@ use crossbeam::crossbeam_channel;
 pub(super) struct Frontend {
     client_id: ClientId,
     sender: crossbeam_channel::Sender<Request>,
-    next_request_number: u64
 }
 
 impl Frontend {
@@ -15,14 +14,7 @@ impl Frontend {
         Frontend { 
             client_id: client_id,
             sender: sender,
-            next_request_number: 0
         }
-    }
-
-    fn next_request(&mut self) -> RequestId {
-        let request_id = RequestId(self.next_request_number);
-        self.next_request_number += 1;
-        request_id
     }
 }
 
@@ -43,12 +35,16 @@ impl crate::crl::Crl for Frontend {
         serialized_transaction_description: ArcData,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
-        paxos_state: paxos::PersistentState
-    ) -> RequestId {
-        let request_id = self.next_request();
-        
+        paxos_state: paxos::PersistentState,
+        save_id: TxSaveId
+    ){        
         self.sender.send(Request::SaveTransactionState{
-            client_request: ClientRequest(self.client_id, store_id, request_id),
+            client_request: ClientRequest {
+                client_id: self.client_id, 
+                store_id, 
+                transaction_id, 
+                save_id
+            },
             store_id,
             transaction_id,
             serialized_transaction_description,
@@ -56,8 +52,6 @@ impl crate::crl::Crl for Frontend {
             tx_disposition: tx_disposition,
             paxos_state: paxos_state
         }).unwrap_or(()); // Explicitly ignore any errors
-    
-        request_id
     }
 
     fn drop_transaction_object_data(
@@ -94,10 +88,14 @@ impl crate::crl::Crl for Frontend {
         timestamp: hlc::Timestamp,
         allocation_transaction_id: transaction::Id,
         serialized_revision_guard: ArcDataSlice
-    ) -> RequestId {
-        let request_id = self.next_request();
+    ) {
         self.sender.send(Request::SaveAllocationState{
-            client_request: ClientRequest(self.client_id, store_id, request_id),
+            client_request: ClientRequest {
+                client_id: self.client_id, 
+                store_id, 
+                transaction_id: allocation_transaction_id, 
+                save_id: TxSaveId(0) // TODO: redesign so we dont do this?
+            },
             state: AllocationRecoveryState {
                 store_id: store_id,
                 store_pointer: store_pointer,
@@ -111,7 +109,6 @@ impl crate::crl::Crl for Frontend {
                 serialized_revision_guard: serialized_revision_guard
             }
         }).unwrap_or(()); // Explicitly ignore any errors
-        request_id
     }
 
     fn delete_allocation_state(

@@ -34,7 +34,7 @@ use crate::paxos;
 use crate::store;
 use crate::transaction;
 use super::{TransactionRecoveryState, AllocationRecoveryState};
-use super::{DecodeError, RequestId, RequestCompletionHandler};
+use super::{DecodeError, TxSaveId, RequestCompletionHandler};
 
 pub(crate) mod backend;
 pub(crate) mod encoding;
@@ -266,11 +266,16 @@ pub(self) struct FullStateResponse(
     Vec<TransactionRecoveryState>, Vec<AllocationRecoveryState>);
 
 pub(self) struct RegisterClientResponse {
-        client_id: ClientId
+    client_id: ClientId
 }
 
 #[derive(Clone, Copy)]
-pub(self) struct ClientRequest(ClientId, store::Id, RequestId);
+pub(self) struct ClientRequest { 
+    client_id: ClientId, 
+    store_id: store::Id, 
+    transaction_id: transaction::Id, 
+    save_id: TxSaveId 
+}
 
 #[derive(Clone)]
 pub(self) enum Request {

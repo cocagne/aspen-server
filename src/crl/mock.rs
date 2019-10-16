@@ -16,8 +16,8 @@ struct RegisterClientResponse {
 }
 
 enum Request {
-    Tx(ClientId, store::Id, RequestId),
-    Alloc(ClientId, store::Id, RequestId),
+    Tx(ClientId, store::Id, transaction::Id, TxSaveId),
+    Alloc(ClientId, store::Id, object::Id),
     RegisterClientRequest {
         sender: crossbeam_channel::Sender<RegisterClientResponse>,
         handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>
@@ -44,13 +44,13 @@ fn io_thread(receiver: crossbeam_channel::Receiver<Request>) {
 
     loop {
         match receiver.recv().unwrap() {
-            Request::Tx(client, store_id, request_id) => {
+            Request::Tx(client, store_id, transaction_id, save_id) => {
                 clients[client.0].complete(
-                    Completion::TransactionSave { store_id, request_id, success:true })
+                    Completion::TransactionSave { store_id, transaction_id, save_id, success:true })
             },
-            Request::Alloc(client, store_id, request_id) => {
+            Request::Alloc(client, store_id, object_id) => {
                 clients[client.0].complete(
-                    Completion::AllocationSave { store_id, request_id, success:true })
+                    Completion::AllocationSave { store_id, object_id, success:true })
             },
             Request::RegisterClientRequest {
                 sender,
@@ -89,7 +89,6 @@ impl crate::crl::Backend for Backend {
 struct Frontend {
     client_id: ClientId,
     sender: crossbeam_channel::Sender<Request>,
-    next_request_number: u64
 }
 
 impl Frontend {
@@ -98,14 +97,7 @@ impl Frontend {
         Frontend { 
             client_id: client_id,
             sender: sender,
-            next_request_number: 0
         }
-    }
-
-    fn next_request(&mut self) -> RequestId {
-        let request_id = RequestId(self.next_request_number);
-        self.next_request_number += 1;
-        request_id
     }
 }
 
@@ -119,18 +111,15 @@ impl crate::crl::Crl for Frontend {
     fn save_transaction_state(
         &mut self,
         store_id: store::Id,
-        _transaction_id: transaction::Id,
+        transaction_id: transaction::Id,
         _serialized_transaction_description: ArcData,
         _object_updates: Option<Vec<transaction::ObjectUpdate>>,
         _tx_disposition: transaction::Disposition,
-        _paxos_state: paxos::PersistentState
-    ) -> RequestId {
-        let request_id = self.next_request();
-        
+        _paxos_state: paxos::PersistentState,
+        save_id: TxSaveId
+    ) {
         // Explicitly ignore any errors
-        let _ = self.sender.send(Request::Tx(self.client_id, store_id, request_id)); 
-    
-        request_id
+        let _ = self.sender.send(Request::Tx(self.client_id, store_id, transaction_id, save_id)); 
     }
 
     fn drop_transaction_object_data(
@@ -149,7 +138,7 @@ impl crate::crl::Crl for Frontend {
         &mut self,
         store_id: store::Id,
         _store_pointer: store::Pointer,
-        _id: object::Id,
+        id: object::Id,
         _kind: object::Kind,
         _size: Option<u32>,
         _data: ArcDataSlice,
@@ -157,13 +146,9 @@ impl crate::crl::Crl for Frontend {
         _timestamp: hlc::Timestamp,
         _allocation_transaction_id: transaction::Id,
         _serialized_revision_guard: ArcDataSlice
-    ) -> RequestId {
-        let request_id = self.next_request();
-
+    ) {
         // Explicitly ignore any errors
-        let _ = self.sender.send(Request::Alloc(self.client_id, store_id, request_id));
-
-        request_id
+        let _ = self.sender.send(Request::Alloc(self.client_id, store_id, id));
     }
 
     fn delete_allocation_state(

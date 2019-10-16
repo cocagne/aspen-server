@@ -5,13 +5,37 @@ use tempdir::TempDir;
 
 use aspen_server::data::*;
 use aspen_server::crl;
-use aspen_server::crl::RequestId;
+use aspen_server::crl::TxSaveId;
 use aspen_server::crl::sweeper;
 use aspen_server::{store, object, transaction, hlc};
 
-struct Response {
-    request_id: RequestId,
+struct TxResponse {
+    save_id: TxSaveId,
     success: bool
+}
+struct AllocResponse {
+    object_id: object::Id,
+    success: bool
+}
+
+enum Response {
+    TxResponse(TxResponse),
+    AllocResponse(AllocResponse)
+}
+
+impl Response {
+    fn as_tx(self) -> TxResponse {
+        match self {
+            Response::TxResponse(x) => x,
+            Response::AllocResponse(_) => panic!("Not a TxResponse")
+        }
+    }
+    fn as_alloc(self) -> AllocResponse {
+        match self {
+            Response::TxResponse(x) => panic!("Not a AllocResponse"),
+            Response::AllocResponse(x) => x
+        }
+    }
 }
 
 struct CHandler {
@@ -21,11 +45,11 @@ struct CHandler {
 impl crl::RequestCompletionHandler for CHandler {
     fn complete(&self, op: crl::Completion) {
         match op {
-            crl::Completion::TransactionSave {request_id, success, ..} => {
-                self.sender.send(Response{request_id, success}).unwrap()
+            crl::Completion::TransactionSave {save_id, success, ..} => {
+                self.sender.send(Response::TxResponse(TxResponse{save_id, success})).unwrap()
             },
-            crl::Completion::AllocationSave {request_id, success, ..} => {
-                self.sender.send(Response{request_id, success}).unwrap()
+            crl::Completion::AllocationSave {object_id, success, ..} => {
+                self.sender.send(Response::AllocResponse(AllocResponse{object_id, success})).unwrap()
             },
         }
     }
@@ -111,18 +135,21 @@ fn recovery() {
         accepted: acc
     };
 
-    let req_id = t.crl.save_transaction_state(
+    let save_id = TxSaveId(5);
+
+    t.crl.save_transaction_state(
         t.store_id,
         txid,
         txd.clone(),
         Some(object_updates),
         disposition,
-        pax
+        pax,
+        save_id
     );
 
-    let resp = t.receiver.recv().unwrap();
+    let resp = t.receiver.recv().unwrap().as_tx();
 
-    assert_eq!(resp.request_id, req_id);
+    assert_eq!(resp.save_id, save_id);
     assert!(resp.success);
     
     let (vtx, va) = t.crl.get_full_recovery_state(t.store_id);
@@ -148,18 +175,21 @@ fn recovery() {
         accepted: acc
     };
 
-    let req_id = t.crl.save_transaction_state(
+    let save_id = TxSaveId(6);
+
+    t.crl.save_transaction_state(
         t.store_id,
         txid,
         txd.clone(),
         None,
         disposition,
-        pax
+        pax,
+        save_id
     );
 
-    let resp = t.receiver.recv().unwrap();
+    let resp = t.receiver.recv().unwrap().as_tx();
 
-    assert_eq!(resp.request_id, req_id);
+    assert_eq!(resp.save_id, save_id);
     assert!(resp.success);
     
     let (vtx, va) = t.crl.get_full_recovery_state(t.store_id);
@@ -214,7 +244,7 @@ fn recovery() {
     let atxid = transaction::Id(uu4);
     let guard = ArcDataSlice::from_vec(vec![5u8, 6u8, 7u8]);
 
-    let req_id = t.crl.save_allocation_state(
+    t.crl.save_allocation_state(
         t.store_id,
         sp.clone(),
         oid2,
@@ -226,9 +256,9 @@ fn recovery() {
         atxid,
         guard.clone());
     
-    let resp = t.receiver.recv().unwrap();
+    let resp = t.receiver.recv().unwrap().as_alloc();
 
-    assert_eq!(resp.request_id, req_id);
+    assert_eq!(resp.object_id, oid2);
     assert!(resp.success);
 
     // Kill CRL and restart to force load from disk
@@ -275,18 +305,21 @@ fn recovery() {
     // to disk. Looks like the get_full_recovery_state can complete before
     // the write finishes. We need an acknowledged request to ensure
     // we're current
+    let save_id = TxSaveId(9);
+
     let req_id = t.crl.save_transaction_state(
         t.store_id,
         transaction::Id(uu2),
         txd.clone(),
         None,
         disposition,
-        pax
+        pax,
+        save_id
     );
 
-    let resp = t.receiver.recv().unwrap();
+    let resp = t.receiver.recv().unwrap().as_tx();
 
-    assert_eq!(resp.request_id, req_id);
+    assert_eq!(resp.save_id, save_id);
     assert!(resp.success);
 
     // Kill CRL and restart to force load from disk

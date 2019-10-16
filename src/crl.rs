@@ -55,17 +55,18 @@ impl From<DecodeError> for std::io::Error {
 
 /// Unique Identifier for a state save request made to the Crash Recovery Log
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
-pub struct RequestId(u64);
+pub struct TxSaveId(pub u64);
 
 pub enum Completion {
     TransactionSave {
         store_id: store::Id,
-        request_id: RequestId,
+        transaction_id: transaction::Id,
+        save_id: TxSaveId,
         success: bool
     },
     AllocationSave {
         store_id: store::Id,
-        request_id: RequestId,
+        object_id: object::Id,
         success: bool
     },
 }
@@ -148,8 +149,9 @@ pub trait Crl {
         serialized_transaction_description: ArcData,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
-        paxos_state: paxos::PersistentState
-    ) -> RequestId;
+        paxos_state: paxos::PersistentState,
+        save_id: TxSaveId
+    );
 
     /// Drops transaction data from the log.
     /// 
@@ -184,7 +186,7 @@ pub trait Crl {
         timestamp: hlc::Timestamp,
         allocation_transaction_id: transaction::Id,
         serialized_revision_guard: ArcDataSlice
-    ) -> RequestId;
+    );
 
     fn delete_allocation_state(
         &self,

@@ -7,6 +7,8 @@ use crossbeam::crossbeam_channel::TryRecvError;
 
 use crate::crl::{RequestCompletionHandler, Crl};
 use crate::crl;
+use crate::object;
+use crate::transaction;
 use super::*;
 
 // Used to indicate that an entry is full and cannot accept any more data
@@ -640,20 +642,30 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                 // Run completion handlers for this entry
                 for cr in &entry.requests {
                     match cr {
-                        Completion::TxSave(client_id, store_id, request_id) => {
+                        Completion::TxSave {
+                            client_id, 
+                            store_id, 
+                            transaction_id, 
+                            save_id 
+                        } => {
                             state.completion_handlers[client_id.0].complete(
                                 crl::Completion::TransactionSave {
                                     store_id: *store_id,
-                                    request_id: *request_id, 
+                                    transaction_id: *transaction_id,
+                                    save_id: *save_id, 
                                     success
                                 }
                             )
                         },
-                        Completion::AllocSave(client_id, store_id, request_id) => {
+                        Completion::AllocSave {
+                            client_id, 
+                            store_id, 
+                            object_id 
+                        } => {
                             state.completion_handlers[client_id.0].complete(
                                 crl::Completion::AllocationSave {
                                     store_id: *store_id,
-                                    request_id: *request_id, 
+                                    object_id: *object_id, 
                                     success
                                 }
                             )
@@ -673,20 +685,30 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                             let (psuccess, v) = t;
                             for cr in v {
                                 match cr {
-                                    Completion::TxSave(client_id, store_id, request_id) => {
+                                    Completion::TxSave {
+                                        client_id, 
+                                        store_id, 
+                                        transaction_id, 
+                                        save_id
+                                    } => {
                                         state.completion_handlers[client_id.0].complete(
                                             crl::Completion::TransactionSave {
                                                 store_id,
-                                                request_id, 
+                                                transaction_id,
+                                                save_id, 
                                                 success: psuccess
                                             }
                                         )
                                     },
-                                    Completion::AllocSave(client_id, store_id, request_id) => {
+                                    Completion::AllocSave {
+                                        client_id, 
+                                        store_id, 
+                                        object_id 
+                                    } => {
                                         state.completion_handlers[client_id.0].complete(
                                             crl::Completion::AllocationSave {
                                                 store_id,
-                                                request_id, 
+                                                object_id, 
                                                 success: psuccess
                                             }
                                         )
@@ -707,8 +729,17 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
 
 #[derive(Copy, Clone)]
 enum Completion {
-    TxSave(ClientId, store::Id, RequestId),
-    AllocSave(ClientId, store::Id, RequestId)
+    TxSave {
+        client_id: ClientId, 
+        store_id: store::Id, 
+        transaction_id: transaction::Id, 
+        save_id: TxSaveId 
+    },
+    AllocSave { 
+        client_id: ClientId, 
+        store_id: store::Id, 
+        object_id: object::Id
+    }
 }
 
 struct Entry {
@@ -776,7 +807,12 @@ impl Entry {
         if self.tx_set.contains(tx_id) {
             // Transaction is already part of this entry
             if let Some(cr) = req {
-                self.requests.push(Completion::TxSave(cr.0, cr.1, cr.2));
+                self.requests.push(Completion::TxSave {
+                    client_id: cr.client_id, 
+                    store_id: cr.store_id, 
+                    transaction_id: cr.transaction_id, 
+                    save_id: cr.save_id
+                });
             }
             return Ok(());
         } else {
@@ -788,7 +824,12 @@ impl Entry {
                 self.tx_set.insert(tx_id.clone());
                 self.size += esize;
                 if let Some(cr) = req {
-                    self.requests.push(Completion::TxSave(cr.0, cr.1, cr.2));
+                    self.requests.push(Completion::TxSave{
+                        client_id: cr.client_id, 
+                        store_id: cr.store_id, 
+                        transaction_id: cr.transaction_id, 
+                        save_id: cr.save_id
+                    });
                 }
                 return Ok(());
             } else {
@@ -806,6 +847,8 @@ impl Entry {
             return Err(EntryFull{});
         }
 
+        let object_id = alloc.borrow().state.id;
+
         let asize = encoding::alloc_write_size(alloc);
 
         if self.have_room_for(asize) {
@@ -813,7 +856,11 @@ impl Entry {
             self.allocs.push(tx_id.clone());
             self.size += asize;
             if let Some(cr) = req {
-                self.requests.push(Completion::AllocSave(cr.0, cr.1, cr.2));
+                self.requests.push(Completion::AllocSave {
+                    client_id: cr.client_id, 
+                    store_id: cr.store_id, 
+                    object_id
+                });
             }
             return Ok(());
         } else {
