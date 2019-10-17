@@ -76,7 +76,7 @@ impl StoreManager {
 
     fn io_completion(&mut self, completion: backend::Completion) {
         if let Some(store) = self.stores.get_mut(&completion.store_id()) {
-            store.backend_complete(&self.net, completion);
+            store.backend_complete(completion);
         }
     }
 
@@ -92,7 +92,7 @@ impl StoreManager {
         locater: &store::Locater) {
 
         match self.stores.get_mut(store_id) {
-            Some(store) => store.read(&self.net, client_id, request_id, locater),
+            Some(store) => store.read(client_id, request_id, locater),
             None => {
                 self.net.send_read_response(client_id, request_id, locater.object_id, 
                     Err(store::ReadError::StoreNotFound));

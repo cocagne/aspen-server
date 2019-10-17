@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::object;
@@ -92,7 +93,7 @@ pub struct SerializedFinalizationAction(pub ArcDataSlice);
 
 pub struct TransactionDescription {
     pub id: Id,
-    //pub serialized_transaction_description: ArcDataSlice,
+    pub serialized_transaction_description: ArcDataSlice,
     pub start_timestamp: hlc::Timestamp,
     pub primary_object: object::Pointer,
     pub designated_leader: u8,
@@ -103,3 +104,30 @@ pub struct TransactionDescription {
     pub notes: Vec<String>
 }
 
+impl TransactionDescription {
+    pub fn hosted_objects(&self, store_id: store::Id) -> HashMap<object::Id, store::Pointer> {
+        let mut h: HashMap<object::Id, store::Pointer> = HashMap::new();
+
+        let mut f = |ptr: &object::Pointer| {
+            for sp in &ptr.store_pointers {
+                if sp.pool_index() == store_id.pool_index {
+                    h.insert(ptr.id, sp.clone());
+                    break;
+                }
+            }
+        };
+
+        for r in &self.requirements {
+            match r {
+                TransactionRequirement::LocalTime{..}               => (),
+                TransactionRequirement::RevisionLock{pointer, ..}   => f(pointer),
+                TransactionRequirement::VersionBump{pointer, ..}    => f(pointer),
+                TransactionRequirement::RefcountUpdate{pointer, ..} => f(pointer),
+                TransactionRequirement::DataUpdate{pointer, ..}     => f(pointer),
+                TransactionRequirement::KeyValueUpdate{pointer, ..} => f(pointer),
+            }
+        }
+
+        h
+    }
+}

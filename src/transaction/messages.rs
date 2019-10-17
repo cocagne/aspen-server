@@ -1,11 +1,13 @@
 
+use std::collections::{HashMap, BTreeMap};
+
+use time;
 use uuid;
 
-use crate::data::ArcData;
+use crate::data::ArcDataSlice;
 use crate::object;
 use crate::paxos;
 use crate::store;
-
 use crate::transaction;
 
 pub enum PrepareResult {
@@ -18,12 +20,19 @@ pub enum AcceptResult {
     Accepted(bool)
 }
 
+pub struct PreTransactionOpportunisticRebuild {
+    object_id: object::Id,
+    required_metadata: object::Metadata,
+    data: ArcDataSlice
+}
+
 pub struct Prepare {
     pub to: store::Id,
     pub from: store::Id,
     pub proposal_id: paxos::ProposalId,
     pub txd: transaction::TransactionDescription,
-    pub serialized_txd: ArcData
+    pub object_updates: HashMap<object::Id, ArcDataSlice>,
+    pub pre_tx_rebuilds: Vec<PreTransactionOpportunisticRebuild>,
 }
 pub struct PrepareResponse {
     pub to: store::Id,
@@ -97,4 +106,49 @@ pub enum Message {
     Heartbeat(Heartbeat),
     StatusRequest(StatusRequest),
     StatusResponse(StatusResponse)
+}
+
+pub struct MessageCache<T> {
+    btmap: BTreeMap<time::SteadyTime, transaction::Id>,
+    hmap: HashMap<transaction::Id, (T, time::SteadyTime)>,
+    max_entries: usize,
+    num_entries: usize
+}
+
+impl<T> MessageCache<T> {
+    pub fn new(max_entries: usize) -> MessageCache<T> {
+        MessageCache {
+            btmap: BTreeMap::new(),
+            hmap: HashMap::new(),
+            max_entries,
+            num_entries: 0
+        }
+    }
+
+    pub fn cache(&mut self, txid: transaction::Id, msg: T) {
+        let now = time::SteadyTime::now();
+        self.hmap.insert(txid, (msg, now.clone()));
+        self.btmap.insert(now.clone(), txid);
+
+        if self.num_entries == self.max_entries {
+            let (ts, txid) = self.btmap.iter().next().unwrap();
+            let ts = ts.clone();
+            let txid = txid.clone();
+            self.btmap.remove(&ts);
+            self.hmap.remove(&txid);
+            self.num_entries -= 1;
+        }
+
+        self.num_entries += 1;
+    }
+
+    pub fn get(&mut self, txid: &transaction::Id) -> Option<T> {
+        match self.hmap.remove(txid) {
+            None => None,
+            Some((msg, ts)) => {
+                self.btmap.remove(&ts);
+                Some(msg)
+            }
+        }
+    }
 }
