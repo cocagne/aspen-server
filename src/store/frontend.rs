@@ -12,6 +12,7 @@ use crate::network;
 use crate::store;
 use crate::transaction;
 use crate::transaction::messages;
+use crate::transaction::messages::Message;
 use crate::transaction::tx::Tx;
 use crate::object;
 
@@ -58,7 +59,7 @@ pub struct Frontend {
 impl Frontend {
     pub fn new(
         store_id: store::Id,
-        backend: &mut Rc<dyn Backend>,
+        backend: &Rc<dyn Backend>,
         object_cache: Box<dyn ObjectCache>,
         crl: &Rc<dyn crl::Crl>,
         net: &Rc<dyn network::Messenger>) -> Frontend {
@@ -78,26 +79,6 @@ impl Frontend {
 
     pub fn id(&self) -> store::Id {
         self.store_id
-    }
-
-    pub fn crl_complete(&mut self, completion: crl::Completion) {
-        match completion {
-            crl::Completion::TransactionSave {
-                transaction_id,
-                save_id,
-                success,
-                ..
-            } => {
-                self.crl_tx_save_complete(transaction_id, save_id, success);
-            },
-            crl::Completion::AllocationSave {
-                object_id,
-                success,
-                ..
-            } => {
-                self.crl_alloc_save_complete(object_id, success);
-            }
-        }
     }
 
     pub fn backend_complete(&mut self, completion: Completion) {
@@ -231,9 +212,64 @@ impl Frontend {
         }
     }
 
-    pub fn receive_prepare(
+    pub fn crl_complete(&mut self, completion: crl::Completion) {
+        match completion {
+            crl::Completion::TransactionSave {
+                transaction_id,
+                save_id,
+                success,
+                ..
+            } => {
+                self.crl_tx_save_complete(transaction_id, save_id, success);
+            },
+            crl::Completion::AllocationSave {
+                object_id,
+                success,
+                ..
+            } => {
+                self.crl_alloc_save_complete(object_id, success);
+            }
+        }
+    }
+
+    fn crl_tx_save_complete(
         &mut self,
-        msg: messages::Prepare) {
+        transaction_id: transaction::Id,
+        save_id: crl::TxSaveId,
+        success: bool) {
+        
+        if let Some(tx) = self.transactions.get_mut(&transaction_id) {
+            tx.crl_tx_save_complete(save_id, success);
+        }
+    }
+
+    fn crl_alloc_save_complete(&mut self, object_id: object::Id, success: bool) {
+        
+    }
+
+    pub fn receive_transaction_message(&mut self, msg: Message) {
+        match msg {
+            Message::Prepare(m) => self.receive_prepare(m),
+            Message::Accept(m) => {
+                self.transactions.get_mut(&m.txid).map(|tx| tx.receive_accept(m));
+            },
+            Message::Resolved(m) => {
+                self.transactions.get_mut(&m.txid).map(|tx| tx.receive_resolved(m));
+            },
+            Message::Finalized(m) => {
+                self.transactions.get_mut(&m.txid).map(|tx| tx.receive_finalized(m));
+            },
+            Message::Heartbeat(m) => {
+                self.transactions.get_mut(&m.txid).map(|tx| tx.receive_heartbeat(m));
+            },
+            Message::StatusRequest(m) => {
+                self.transactions.get_mut(&m.txid).map(|tx| tx.receive_status_request(m));
+            },
+            _ => () // ignore
+        }
+    }
+
+    pub fn receive_prepare(&mut self, msg: messages::Prepare) {
 
         let txid = msg.txd.id;
 
@@ -270,7 +306,7 @@ impl Frontend {
                     tx.receive_accept(accept);
                 }
                 if let Some(resolved) = self.resolved_cache.get(&txid) {
-                    tx.receive_resolved(resolved.value);
+                    tx.receive_resolved(resolved);
                 }
 
                 for p in loaded {
@@ -280,21 +316,6 @@ impl Frontend {
                 self.transactions.insert(txid, tx);
             }
         }
-    }
-
-    fn crl_tx_save_complete(
-        &mut self,
-        transaction_id: transaction::Id,
-        save_id: crl::TxSaveId,
-        success: bool) {
-        
-        if let Some(tx) = self.transactions.get_mut(&transaction_id) {
-            tx.crl_tx_save_complete(save_id, success);
-        }
-    }
-
-    fn crl_alloc_save_complete(&mut self, object_id: object::Id, success: bool) {
-        
     }
 }
 

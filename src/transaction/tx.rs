@@ -21,6 +21,7 @@ struct LastPrepare {
 }
 
 pub struct Tx {
+    store_id: store::Id,
     txid: transaction::Id,
     backend: Rc<dyn Backend>,
     crl: Rc<dyn crl::Crl>,
@@ -31,6 +32,7 @@ pub struct Tx {
     object_updates: HashMap<object::Id, ArcDataSlice>,
     oresolution: Option<bool>,
     ofinalized: Option<bool>,
+    disposition: transaction::Disposition,
     objects: HashMap<object::Id, store::TxStateRef>,
     pending_object_loads: usize,
     pending_object_commits: usize,
@@ -50,6 +52,7 @@ impl Tx {
         let pending_object_loads = object_locaters.len();
 
         Tx {
+            store_id,
             txid: prepare.txd.id,
             backend: backend.clone(), 
             crl: crl.clone(),
@@ -60,6 +63,7 @@ impl Tx {
             object_updates: prepare.object_updates,
             oresolution: None,
             ofinalized: None,
+            disposition: transaction::Disposition::Undetermined,
             objects: HashMap::new(),
             pending_object_loads,
             pending_object_commits: 0,
@@ -72,31 +76,8 @@ impl Tx {
         }
     }
 
-    pub fn resolved(&self) -> Option<bool> {
-        return self.oresolution;
-    }   
-
-    pub fn finalized(&self) -> Option<bool> {
-        return self.ofinalized;
-    }
-
     fn update_last_event(&mut self) {
         self.last_event = time::PreciseTime::now();
-    }
-
-    pub fn receive_finalized(&mut self, value: bool) {
-        self.ofinalized = Some(value);
-        self.on_resolution(value)
-    }
-
-    pub fn receive_resolved(&mut self, value: bool) {
-        self.on_resolution(value)
-    }
-
-    fn on_resolution(&mut self, value:bool) {
-        if self.oresolution.is_none() {
-            self.oresolution = Some(value);
-        } 
     }
 
     pub fn object_loaded(&mut self, state: &Rc<std::cell::RefCell<store::State>>) {
@@ -112,8 +93,13 @@ impl Tx {
         }
     }
 
+    fn on_resolution(&mut self, value:bool) {
+        if self.oresolution.is_none() {
+            self.oresolution = Some(value);
+        } 
+    }
     
-    pub fn all_objects_loaded(&mut self) {
+    fn all_objects_loaded(&mut self) {
         // Check to see if the tx is already resolved
     }
 
@@ -158,9 +144,59 @@ impl Tx {
     }
 
     pub fn receive_accept(&mut self, m: Accept) {
+        self.update_last_event();
 
+        let response = match self.acceptor.receive_accept(m.proposal_id, m.value) {
+            Ok(accepted) => AcceptResult::Accepted(accepted.proposal_value),
+                
+            Err(nack) => AcceptResult::Nack(nack.promised_proposal_id)
+        };
+
+        let r = AcceptResponse {
+            to: m.from,
+            from: self.store_id,
+            txid: self.txid,
+            proposal_id: m.proposal_id,
+            response
+        };
+
+        self.net.send_transaction_message(Message::AcceptResponse(r));
     }
 
-    
+    pub fn receive_resolved(&mut self, m: Resolved) {
+        self.update_last_event();
+        self.on_resolution(m.value)
+    }
 
+    pub fn receive_finalized(&mut self, m: Finalized) {
+        self.update_last_event();
+        self.ofinalized = Some(m.value);
+        self.on_resolution(m.value)
+    }
+
+    pub fn receive_heartbeat(&mut self, _: Heartbeat) {
+        self.update_last_event();
+    }
+
+    pub fn receive_status_request(&mut self, m: StatusRequest) {
+        let status = match self.oresolution {
+            None => transaction::Status::Unresolved,
+            Some(commit) => if commit {
+                transaction::Status::Committed
+            } else {
+                transaction::Status::Aborted
+            }
+        };
+        
+        let r = StatusResponse {
+            to: m.from,
+            from: self.store_id,
+            txid: self.txid,
+            request_uuid: m.request_uuid,
+            status,
+            finalized: self.ofinalized.is_some()
+        };
+
+        self.net.send_transaction_message(Message::StatusResponse(r));
+    }
 }

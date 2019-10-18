@@ -2,6 +2,7 @@ use uuid;
 
 use crate::object;
 use crate::store;
+use crate::transaction;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct ClientId(uuid::Uuid);
@@ -16,4 +17,6 @@ pub trait Messenger {
         request_id: RequestId,
         object_id: object::Id,
         result: Result<store::ReadState, store::ReadError>);
+
+    fn send_transaction_message(&self, msg: transaction::Message);
 }

@@ -14,6 +14,7 @@ use crate::network;
 use crate::store;
 use crate::store::backend;
 use crate::store::frontend;
+use crate::transaction;
 
 pub enum StoreLoadResult {
     Success(store::Id),
@@ -27,6 +28,7 @@ pub trait StoreLoadCompletionHandler {
 pub enum Message {
     IOCompletion(backend::Completion),
     CRLCompletion(crl::Completion),
+    TxMessage(transaction::messages::Message),
     Read {
         client_id: network::ClientId,
         request_id: network::RequestId,
@@ -71,6 +73,9 @@ impl StoreManager {
             },
             Message::LoadStore{store_id, load_fn, handler} => {
                 self.load_store(store_id, load_fn, handler)
+            },
+            Message::TxMessage(msg) => {
+                self.tx_message(msg)
             }
         }
     }
@@ -84,6 +89,12 @@ impl StoreManager {
     fn crl_completion(&mut self, completion: crl::Completion) {
         if let Some(store) = self.stores.get_mut(&completion.store_id()) {
             store.crl_complete(completion);
+        }
+    }
+
+    fn tx_message(&mut self, msg: transaction::messages::Message) {
+        if let Some(store) = self.stores.get_mut(&msg.to_store()) {
+            store.receive_transaction_message(msg);
         }
     }
 

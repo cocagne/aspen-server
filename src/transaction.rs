@@ -15,6 +15,7 @@ pub mod requirements;
 pub mod tx;
 
 pub use requirements::{TransactionRequirement, KeyRequirement, TimestampRequirement};
+pub use messages::Message;
 
 /// Transaction UUID
 /// 

@@ -108,6 +108,23 @@ pub enum Message {
     StatusResponse(StatusResponse)
 }
 
+impl Message {
+    pub fn to_store(&self) -> store::Id {
+        match self {
+            Message::Prepare(m) => m.to,
+            Message::PrepareResponse(m) => m.to,
+            Message::Accept(m) => m.to,
+            Message::AcceptResponse(m) => m.to,
+            Message::Resolved(m) => m.to,
+            Message::Committed(m) => m.to,
+            Message::Finalized(m) => m.to,
+            Message::Heartbeat(m) => m.to,
+            Message::StatusRequest(m) => m.to,
+            Message::StatusResponse(m) => m.to,
+        }
+    }
+}
+
 pub struct MessageCache<T> {
     btmap: BTreeMap<time::SteadyTime, transaction::Id>,
     hmap: HashMap<transaction::Id, (T, time::SteadyTime)>,
