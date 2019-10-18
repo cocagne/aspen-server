@@ -32,7 +32,7 @@ impl Response {
     }
     fn as_alloc(self) -> AllocResponse {
         match self {
-            Response::TxResponse(x) => panic!("Not a AllocResponse"),
+            Response::TxResponse(_) => panic!("Not a AllocResponse"),
             Response::AllocResponse(x) => x
         }
     }
@@ -307,7 +307,7 @@ fn recovery() {
     // we're current
     let save_id = TxSaveId(9);
 
-    let req_id = t.crl.save_transaction_state(
+    t.crl.save_transaction_state(
         t.store_id,
         transaction::Id(uu2),
         txd.clone(),

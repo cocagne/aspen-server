@@ -152,7 +152,6 @@ impl Proposer {
 mod tests {
     
     use super::*;
-    use crate::paxos::Message;
 
     #[test]
     fn proposal_id_comparisons() {

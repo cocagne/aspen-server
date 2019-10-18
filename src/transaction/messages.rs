@@ -21,9 +21,9 @@ pub enum AcceptResult {
 }
 
 pub struct PreTransactionOpportunisticRebuild {
-    object_id: object::Id,
-    required_metadata: object::Metadata,
-    data: ArcDataSlice
+    pub object_id: object::Id,
+    pub required_metadata: object::Metadata,
+    pub data: ArcDataSlice
 }
 
 pub struct Prepare {
