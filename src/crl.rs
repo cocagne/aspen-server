@@ -71,6 +71,15 @@ pub enum Completion {
     },
 }
 
+impl Completion {
+    pub fn store_id(&self) -> store::Id {
+        match self {
+            Completion::TransactionSave { store_id, ..} => *store_id,
+            Completion::AllocationSave { store_id, .. } => *store_id
+        }
+    }
+}
+
 /// Used to notify completion of state save requests made to the Crash Recovery Log
 /// 
 /// Methods on the handler are called within the context of a CRL thread. Consequently,

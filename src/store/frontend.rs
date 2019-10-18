@@ -6,6 +6,8 @@ use either::{Either, Left, Right};
 
 use super::backend::{Backend, Completion};
 use super::ObjectCache;
+
+use crate::crl;
 use crate::network;
 use crate::store;
 use crate::transaction;
@@ -42,8 +44,9 @@ impl PendingReadCache {
 
 pub struct Frontend {
     store_id: store::Id,
-    backend: Box<dyn Backend>,
+    backend: Rc<dyn Backend>,
     object_cache: Box<dyn ObjectCache>,
+    crl: Rc<dyn crl::Crl>,
     net: Rc<dyn network::Messenger>,
     pr_cache: PendingReadCache,
     accept_cache: messages::MessageCache<messages::Accept>,
@@ -55,13 +58,15 @@ pub struct Frontend {
 impl Frontend {
     pub fn new(
         store_id: store::Id,
-        backend: Box<dyn Backend>,
+        backend: &mut Rc<dyn Backend>,
         object_cache: Box<dyn ObjectCache>,
+        crl: &Rc<dyn crl::Crl>,
         net: &Rc<dyn network::Messenger>) -> Frontend {
         Frontend {
             store_id, 
-            backend,
+            backend: backend.clone(),
             object_cache,
+            crl: crl.clone(),
             net: net.clone(),
             pr_cache: PendingReadCache { vstack: Vec::new() },
             accept_cache: messages::MessageCache::new(50),
@@ -75,6 +80,26 @@ impl Frontend {
         self.store_id
     }
 
+    pub fn crl_complete(&mut self, completion: crl::Completion) {
+        match completion {
+            crl::Completion::TransactionSave {
+                transaction_id,
+                save_id,
+                success,
+                ..
+            } => {
+                self.crl_tx_save_complete(transaction_id, save_id, success);
+            },
+            crl::Completion::AllocationSave {
+                object_id,
+                success,
+                ..
+            } => {
+                self.crl_alloc_save_complete(object_id, success);
+            }
+        }
+    }
+
     pub fn backend_complete(&mut self, completion: Completion) {
         match completion {
             Completion::Read{
@@ -82,18 +107,18 @@ impl Frontend {
                 store_pointer,
                 result,
                 ..
-            } => self.backend_complete_read(object_id, store_pointer, result),
+            } => self.backend_read_completed(object_id, store_pointer, result),
 
             Completion::Commit {
                 object_id,
                 txid,
                 result,
                 ..
-            } => self.backend_complete_commit(object_id, txid, result)
+            } => self.backend_commit_completed(object_id, txid, result)
         }
     }
 
-    fn backend_complete_read(
+    fn backend_read_completed(
         &mut self,
         object_id: object::Id,
         store_pointer: store::Pointer,
@@ -127,21 +152,16 @@ impl Frontend {
                             },
                             Right(tx_read) => {
                                 if let Some(tx) = self.transactions.get_mut(&tx_read.transaction_id) {
-                                    tx.objects.insert(object_id, store::TxStateRef::new(&o));
-                                    tx.pending_object_loads -= 1;
-                                    if tx.pending_object_loads == 0 {
-                                        tx.objects_loaded();
-                                    }
+                                    tx.object_loaded(&o);
                                 }
                             }
                         }
-                        
                     }
 
                     self.pr_cache.recycle(vpr);
                 }
             },
-            Err(err) => {
+            Err(_) => {
         
                 if let Some(vpr) = self.pending_reads.remove(&object_id) {
 
@@ -153,16 +173,18 @@ impl Frontend {
         }
     }
 
-    fn backend_complete_commit(
+    fn backend_commit_completed(
         &mut self,
-        _object_id: object::Id,
-        _txid: transaction::Id,
-        _result: Result<(), store::CommitError>) {
-        
-        unimplemented!()
+        object_id: object::Id,
+        txid: transaction::Id,
+        result: Result<(), store::CommitError>) {
+
+        if let Some(tx) = self.transactions.get_mut(&txid) {
+            tx.commit_complete(object_id, result);
+        }
     }
 
-    pub fn read(
+    pub fn read_object_for_network(
         &mut self, 
         client_id: network::ClientId,
         request_id: network::RequestId,
@@ -216,47 +238,63 @@ impl Frontend {
         let txid = msg.txd.id;
 
         match self.transactions.get_mut(&txid) {
-            Some(tx) => tx.receive_prepare(msg, &self.net),
+            Some(tx) => tx.receive_prepare(msg),
             None => {
-                let objects_to_load = msg.txd.hosted_objects(self.store_id);
-                
-                let mut tx = Tx::new(self.store_id, msg);
 
-                // Prepare could be late. Check for Accept and Resolved messages
-                if let Some(accept) = self.accept_cache.get(&txid) {
-                    tx.receive_accept(accept, &self.net);
-                }
-                if let Some(resolved) = self.resolved_cache.get(&txid) {
-                    tx.receive_resolved(resolved.value);
-                }
+                let object_locaters = msg.txd.hosted_objects(self.store_id);
 
-                // Begin loading objects
+                let mut tx = Tx::new(self.store_id, msg, &object_locaters,
+                    &self.backend, &self.crl, &self.net);
 
-                tx.pending_object_loads = objects_to_load.len();
+                // Start Loading objects
 
-                for (object_id, pointer) in objects_to_load {
+                let mut loaded: Vec<Rc<std::cell::RefCell<store::State>>> = Vec::new();
+
+                for (object_id, pointer) in object_locaters {
                     match self.object_cache.get(&object_id) {
                         Some(obj) => {
-                            tx.objects.insert(object_id, store::TxStateRef::new(obj));
-                            tx.pending_object_loads -= 1;
+                            loaded.push(obj.clone());
                         },
                         None => {
                             let locater = store::Locater { 
-                                object_id, 
-                                pointer
+                                object_id: object_id,
+                                pointer: pointer
                             };
                             self.read_object_for_transaction(txid, &locater);
                         }
                     }
                 }
+                
+                // Prepare could be late. Check for Accept and Resolved messages
+                if let Some(accept) = self.accept_cache.get(&txid) {
+                    tx.receive_accept(accept);
+                }
+                if let Some(resolved) = self.resolved_cache.get(&txid) {
+                    tx.receive_resolved(resolved.value);
+                }
 
-                if tx.pending_object_loads == 0 {
-                    tx.objects_loaded();
+                for p in loaded {
+                    tx.object_loaded(&p);
                 }
 
                 self.transactions.insert(txid, tx);
             }
         }
+    }
+
+    fn crl_tx_save_complete(
+        &mut self,
+        transaction_id: transaction::Id,
+        save_id: crl::TxSaveId,
+        success: bool) {
+        
+        if let Some(tx) = self.transactions.get_mut(&transaction_id) {
+            tx.crl_tx_save_complete(save_id, success);
+        }
+    }
+
+    fn crl_alloc_save_complete(&mut self, object_id: object::Id, success: bool) {
+        
     }
 }
 

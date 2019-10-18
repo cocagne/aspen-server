@@ -5,6 +5,7 @@
 ///!
 /// 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crossbeam::channel;
 
@@ -43,8 +44,8 @@ pub enum Message {
 pub struct StoreManager {
     receiver: channel::Receiver<Message>,
     stores: HashMap<store::Id, frontend::Frontend>,
-    _crl: Box<dyn crl::Crl>,
-    net: Box<dyn network::Messenger>
+    _crl: Rc<dyn crl::Crl>,
+    net: Rc<dyn network::Messenger>
 }
 
 impl StoreManager {
@@ -80,8 +81,10 @@ impl StoreManager {
         }
     }
 
-    fn crl_completion(&mut self, _completion: crl::Completion) {
-
+    fn crl_completion(&mut self, completion: crl::Completion) {
+        if let Some(store) = self.stores.get_mut(&completion.store_id()) {
+            store.crl_complete(completion);
+        }
     }
 
     fn read(
@@ -92,7 +95,7 @@ impl StoreManager {
         locater: &store::Locater) {
 
         match self.stores.get_mut(store_id) {
-            Some(store) => store.read(client_id, request_id, locater),
+            Some(store) => store.read_object_for_network(client_id, request_id, locater),
             None => {
                 self.net.send_read_response(client_id, request_id, locater.object_id, 
                     Err(store::ReadError::StoreNotFound));

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::cell::RefCell;
 
 use crate::object;
 use super::backend;
@@ -17,7 +18,7 @@ struct Obj {
 pub struct MockStore {
     store_id: store::Id,
     completion_handler: Box<dyn backend::CompletionHandler>,
-    content: HashMap<object::Id, Obj>,
+    content: RefCell<HashMap<object::Id, Obj>>,
 }
 
 impl backend::Backend for MockStore {
@@ -26,14 +27,17 @@ impl backend::Backend for MockStore {
     }
 
     fn allocate(
-        &mut self,
+        &self,
         id: object::Id,
         object_kind: object::Kind,
         metadata: object::Metadata,
         data: sync::Arc<Vec<u8>>,
         _max_size: Option<u32>
     ) -> Result<Pointer, AllocationError> {
-        self.content.insert(id, Obj {
+
+        let mut content = self.content.borrow_mut();
+
+        content.insert(id, Obj {
             id,
             metadata,
             object_kind,
@@ -42,8 +46,11 @@ impl backend::Backend for MockStore {
         Ok(Pointer::None{pool_index: 0})
     }
 
-    fn read(&mut self, locater: &Locater) {
-        let result = match self.content.get(&locater.object_id) {
+    fn read(&self, locater: &Locater) {
+
+        let content = self.content.borrow_mut();
+
+        let result = match content.get(&locater.object_id) {
             None => Err(ReadError::ObjectNotFound),
             Some(s) => Ok(ReadState {
                 id: s.id,
@@ -60,9 +67,11 @@ impl backend::Backend for MockStore {
         });
     }
 
-    fn commit(&mut self, state: State, txid: transaction::Id) {
+    fn commit(&self, state: State, txid: transaction::Id) {
         
-        self.content.insert(state.id, Obj {
+        let mut content = self.content.borrow_mut();
+
+        content.insert(state.id, Obj {
             id : state.id,
             metadata: state.metadata,
             object_kind: state.object_kind,

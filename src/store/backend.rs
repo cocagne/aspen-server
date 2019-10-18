@@ -41,7 +41,7 @@ pub trait Backend {
     fn set_completion_handler(&mut self, handler: Box<dyn CompletionHandler>);
 
     fn allocate(
-        &mut self,
+        &self,
         id: object::Id,
         object_kind: object::Kind,
         metadata: object::Metadata,
@@ -49,7 +49,7 @@ pub trait Backend {
         max_size: Option<u32>
     ) -> Result<Pointer, AllocationError>;
 
-    fn read(&mut self, locater: &Locater);
+    fn read(&self, locater: &Locater);
 
-    fn commit(&mut self, state: State, txid: transaction::Id);
+    fn commit(&self, state: State, txid: transaction::Id);
 }
