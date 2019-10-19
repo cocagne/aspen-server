@@ -17,6 +17,10 @@ impl Acceptor {
         }
     }
 
+    pub fn persistent_state(&self) -> PersistentState {
+        self.state
+    }
+
     pub fn receive_prepare(&mut self, proposal_id: ProposalId) -> Result<Promise, Nack> {
 
         let promised = self.state.promised;

@@ -111,7 +111,7 @@ fn recovery() {
     let uu4 = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
 
     let txid = aspen_server::transaction::Id(uu1);
-    let txd = ArcData::new(vec![0u8, 1u8, 2u8]);
+    let txd = ArcDataSlice::from(vec![0u8, 1u8, 2u8]);
     let oid1 = aspen_server::object::Id(uu2);
     let oid2 = aspen_server::object::Id(uu3);
     let ou1 = aspen_server::transaction::ObjectUpdate {

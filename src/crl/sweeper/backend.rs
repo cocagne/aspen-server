@@ -53,7 +53,7 @@ impl LogState {
                 data_locations: Some(rtx.update_locations.iter().map(|ou| ou.1).collect()),
                 state: TransactionRecoveryState {
                     store_id: rtx.id.0,
-                    serialized_transaction_description: rtx.serialized_transaction_description.clone(),
+                    serialized_transaction_description: rtx.serialized_transaction_description.clone().into(),
                     object_updates: rtx.object_updates.clone(),
                     tx_disposition: rtx.tx_disposition,
                     paxos_state: rtx.paxos_state

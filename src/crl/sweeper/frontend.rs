@@ -29,10 +29,10 @@ impl crate::crl::Crl for Frontend {
     }
 
     fn save_transaction_state(
-        &mut self,
+        &self,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: ArcData,
+        serialized_transaction_description: ArcDataSlice,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState,
@@ -77,7 +77,7 @@ impl crate::crl::Crl for Frontend {
     }
 
     fn save_allocation_state(
-        &mut self,
+        &self,
         store_id: store::Id,
         store_pointer: store::Pointer,
         id: object::Id,

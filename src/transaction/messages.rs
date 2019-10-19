@@ -10,11 +10,13 @@ use crate::paxos;
 use crate::store;
 use crate::transaction;
 
+#[derive(Debug, Copy, Clone)]
 pub enum PrepareResult {
     Nack(paxos::ProposalId),
     Promise(Option<(paxos::ProposalId, bool)>)
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum AcceptResult {
     Nack(paxos::ProposalId),
     Accepted(bool)

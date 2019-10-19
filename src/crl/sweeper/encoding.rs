@@ -50,7 +50,7 @@ pub(super) fn log_entry(
         mtx.last_entry_serial = entry_serial_number;
 
         if mtx.txd_location.is_none() {
-            let s = ArcDataSlice::from(&mtx.state.serialized_transaction_description);
+            let s = mtx.state.serialized_transaction_description.clone();
             mtx.txd_location = Some(push_data_buffer(s));
         }
 
@@ -600,7 +600,7 @@ mod tests {
             data_locations: None,
             state: TransactionRecoveryState {
                 store_id,
-                serialized_transaction_description: std,
+                serialized_transaction_description: std.into(),
                 object_updates: Vec::new(),
                 tx_disposition,
                 paxos_state
@@ -661,7 +661,7 @@ mod tests {
             data_locations: Some(vec![u1, u2]),
             state: TransactionRecoveryState {
                 store_id,
-                serialized_transaction_description: std,
+                serialized_transaction_description: std.into(),
                 object_updates: vec![ou1, ou2],
                 tx_disposition,
                 paxos_state

@@ -57,6 +57,12 @@ impl From<DecodeError> for std::io::Error {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct TxSaveId(pub u64);
 
+impl TxSaveId {
+    pub fn next(&self) -> TxSaveId {
+        TxSaveId(self.0 + 1)
+    }
+}
+
 pub enum Completion {
     TransactionSave {
         store_id: store::Id,
@@ -106,7 +112,7 @@ pub trait Backend {
 #[derive(Clone, Eq, PartialEq)]
 pub struct TransactionRecoveryState {
     pub store_id: store::Id,
-    pub serialized_transaction_description: ArcData,
+    pub serialized_transaction_description: ArcDataSlice,
     pub object_updates: Vec<transaction::ObjectUpdate>,
     pub tx_disposition: transaction::Disposition,
     pub paxos_state: paxos::PersistentState
@@ -152,10 +158,10 @@ pub trait Crl {
     /// returned from this function. If an error is encountered and/or the state cannot be
     /// saved, the completion handler will never be called.
     fn save_transaction_state(
-        &mut self,
+        &self,
         store_id: store::Id,
         transaction_id: transaction::Id,
-        serialized_transaction_description: ArcData,
+        serialized_transaction_description: ArcDataSlice,
         object_updates: Option<Vec<transaction::ObjectUpdate>>,
         tx_disposition: transaction::Disposition,
         paxos_state: paxos::PersistentState,
@@ -184,7 +190,7 @@ pub trait Crl {
     /// Similar to transaction state saves, no completion notice will be provided if an error
     /// is encountered
     fn save_allocation_state(
-        &mut self,
+        &self,
         store_id: store::Id,
         store_pointer: store::Pointer,
         id: object::Id,

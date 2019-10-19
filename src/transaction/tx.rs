@@ -11,12 +11,14 @@ use crate::paxos;
 use crate::store;
 use crate::store::backend::Backend;
 use crate::transaction;
+use crate::transaction::{Disposition, Status};
 
 use super::messages::*;
 
 struct LastPrepare {
     from: store::Id,
     proposal_id: paxos::ProposalId,
+    response: PrepareResult,
     save_id: crl::TxSaveId
 }
 
@@ -38,6 +40,8 @@ pub struct Tx {
     pending_object_commits: usize,
     last_prepare: LastPrepare,
     last_event: time::PreciseTime,
+    save_object_updates: bool,
+    last_crl_save_complete: Option<crl::TxSaveId>
 }
 
 impl Tx {
@@ -69,10 +73,13 @@ impl Tx {
             pending_object_commits: 0,
             last_prepare: LastPrepare {
                 from: prepare.from,
-                proposal_id: prepare.proposal_id,
+                proposal_id: paxos::ProposalId{number: 0, peer: 0},
+                response: PrepareResult::Nack(paxos::ProposalId{number: 0, peer: 0}),
                 save_id: crl::TxSaveId(0)
             },
             last_event: time::PreciseTime::now(),
+            save_object_updates: true,
+            last_crl_save_complete: None
         }
     }
 
@@ -101,6 +108,9 @@ impl Tx {
     
     fn all_objects_loaded(&mut self) {
         // Check to see if the tx is already resolved
+
+        //if last_crl_save_complete, and ID matches self.last_prepare.save_id
+        //send PrepareResponse directly
     }
 
     pub fn crl_tx_save_complete(
@@ -108,6 +118,25 @@ impl Tx {
         save_id: crl::TxSaveId,
         success: bool) {
 
+        if success {
+            self.last_crl_save_complete = Some(save_id);
+        }
+
+        if success && 
+           save_id == self.last_prepare.save_id && 
+           self.disposition != Disposition::Undetermined {
+
+            let r = PrepareResponse {
+                to: self.last_prepare.from,
+                from: self.store_id,
+                txid: self.txid,
+                proposal_id: self.last_prepare.proposal_id,
+                response: self.last_prepare.response.clone(),
+                disposition: self.disposition
+            };
+
+            self.net.send_transaction_message(Message::PrepareResponse(r));
+        }
     }
 
     pub fn commit_complete(
@@ -118,6 +147,9 @@ impl Tx {
         // we skip ones with commit errors
     }
 
+    fn try_to_lock(&mut self) {
+
+    }
     
     pub fn receive_prepare(&mut self, msg: Prepare) {
 
@@ -132,13 +164,56 @@ impl Tx {
 
         match self.acceptor.receive_prepare(msg.proposal_id) {
             Ok(promise) => {
-                // need CRL save before send. Mark prep response state here then actually send
-                // message when we get save completion. Need to use a serial number here too
-                // keep only the most recent. Use serial number in response to match response
-                // with the reply
+                match self.disposition {
+                    Disposition::Undetermined => self.try_to_lock(),
+                    Disposition::VoteAbort => self.try_to_lock(),
+                    Disposition::VoteCommit => {
+                        // Once we've decided to commit, we're committed to committing.
+                        ()
+                    }
+                }
+
+                let object_updates = if self.save_object_updates {
+                    let v: Vec<transaction::ObjectUpdate> = self.object_updates.iter().map(
+                    |(object_id, data)| {
+                        transaction::ObjectUpdate {
+                            object_id: *object_id,
+                            data: data.clone()
+                        }
+                    }).collect();
+                    Some(v)
+                } else {
+                    None
+                };
+
+                let save_id = self.last_prepare.save_id.next();
+
+                self.last_prepare = LastPrepare {
+                    from: msg.from,
+                    proposal_id: msg.proposal_id,
+                    response: PrepareResult::Promise(promise.last_accepted),
+                    save_id
+                };
+
+                self.crl.save_transaction_state(
+                    self.store_id, 
+                    self.txid, 
+                    self.txd.serialized_transaction_description.clone(),
+                    object_updates,
+                    self.disposition,
+                    self.acceptor.persistent_state(),
+                    save_id);
             },
             Err(nack) => {
-                // this we can send straight away
+                let r = PrepareResponse {
+                    to: msg.from,
+                    from: self.store_id,
+                    txid: self.txid,
+                    proposal_id: msg.proposal_id,
+                    response: PrepareResult::Nack(nack.promised_proposal_id),
+                    disposition: self.disposition
+                };
+                self.net.send_transaction_message(Message::PrepareResponse(r));
             }
         }
     }
@@ -180,14 +255,14 @@ impl Tx {
 
     pub fn receive_status_request(&mut self, m: StatusRequest) {
         let status = match self.oresolution {
-            None => transaction::Status::Unresolved,
+            None => Status::Unresolved,
             Some(commit) => if commit {
-                transaction::Status::Committed
+                Status::Committed
             } else {
-                transaction::Status::Aborted
+                Status::Aborted
             }
         };
-        
+
         let r = StatusResponse {
             to: m.from,
             from: self.store_id,
