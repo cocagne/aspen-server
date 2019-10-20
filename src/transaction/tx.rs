@@ -15,10 +15,13 @@ use crate::transaction::{Disposition, Status};
 
 use super::messages::*;
 
-struct LastPrepare {
-    from: store::Id,
-    proposal_id: paxos::ProposalId,
-    response: PrepareResult,
+struct DelayedPrepareResponse {
+    response: Option<PrepareResponse>,
+    save_id: crl::TxSaveId
+}
+
+struct DelayedAcceptResponse {
+    response: Option<AcceptResponse>,
     save_id: crl::TxSaveId
 }
 
@@ -38,10 +41,11 @@ pub struct Tx {
     objects: HashMap<object::Id, store::TxStateRef>,
     pending_object_loads: usize,
     pending_object_commits: usize,
-    last_prepare: LastPrepare,
+    delayed_prepare: DelayedPrepareResponse,
+    delayed_accept: DelayedAcceptResponse,
     last_event: time::PreciseTime,
     save_object_updates: bool,
-    last_crl_save_complete: Option<crl::TxSaveId>
+    next_crl_save: crl::TxSaveId
 }
 
 impl Tx {
@@ -71,16 +75,24 @@ impl Tx {
             objects: HashMap::new(),
             pending_object_loads,
             pending_object_commits: 0,
-            last_prepare: LastPrepare {
-                from: prepare.from,
-                proposal_id: paxos::ProposalId{number: 0, peer: 0},
-                response: PrepareResult::Nack(paxos::ProposalId{number: 0, peer: 0}),
+            delayed_prepare: DelayedPrepareResponse {
+                response: None,
+                save_id: crl::TxSaveId(0)
+            },
+            delayed_accept: DelayedAcceptResponse {
+                response: None,
                 save_id: crl::TxSaveId(0)
             },
             last_event: time::PreciseTime::now(),
             save_object_updates: true,
-            last_crl_save_complete: None
+            next_crl_save: crl::TxSaveId(1)
         }
+    }
+
+    fn get_save_id(&mut self) -> crl::TxSaveId {
+        let save_id = self.next_crl_save;
+        self.next_crl_save = self.next_crl_save.next();
+        save_id
     }
 
     fn update_last_event(&mut self) {
@@ -109,34 +121,11 @@ impl Tx {
     fn all_objects_loaded(&mut self) {
         // Check to see if the tx is already resolved
 
-        //if last_crl_save_complete, and ID matches self.last_prepare.save_id
-        //send PrepareResponse directly
+        // if 
     }
 
-    pub fn crl_tx_save_complete(
-        &mut self,
-        save_id: crl::TxSaveId,
-        success: bool) {
+    fn determine_local_disposition(&mut self) {
 
-        if success {
-            self.last_crl_save_complete = Some(save_id);
-        }
-
-        if success && 
-           save_id == self.last_prepare.save_id && 
-           self.disposition != Disposition::Undetermined {
-
-            let r = PrepareResponse {
-                to: self.last_prepare.from,
-                from: self.store_id,
-                txid: self.txid,
-                proposal_id: self.last_prepare.proposal_id,
-                response: self.last_prepare.response.clone(),
-                disposition: self.disposition
-            };
-
-            self.net.send_transaction_message(Message::PrepareResponse(r));
-        }
     }
 
     pub fn commit_complete(
@@ -147,8 +136,68 @@ impl Tx {
         // we skip ones with commit errors
     }
 
-    fn try_to_lock(&mut self) {
+    pub fn crl_tx_save_complete(&mut self, save_id: crl::TxSaveId, success: bool) {
 
+        if ! success {
+            // Cannot send Paxos messages if durable state fails
+            if self.delayed_prepare.save_id == save_id {
+                self.delayed_prepare.response = None;
+            }
+            if self.delayed_accept.save_id == save_id {
+                self.delayed_accept.response = None;
+            }
+            return; 
+        }
+
+        if save_id == self.delayed_prepare.save_id {
+            if let Some(r) = &self.delayed_prepare.response {
+                if r.proposal_id.number == 1 && r.disposition == Disposition::Undetermined {
+                    // We must still be loading objects. Sending an Undetermined resposne
+                    // now would likely result in another Paxos round. Skip sending this
+                    // and allow all_objects_loaded() to do so when it's called
+                    return;
+                }
+            }
+            let mut o = None;
+            std::mem::swap(&mut o, &mut self.delayed_prepare.response);
+            if let Some(r) = o {
+                self.net.send_transaction_message(Message::PrepareResponse(r));
+            }
+        }
+            
+        if save_id == self.delayed_accept.save_id {
+            let mut o = None;
+            std::mem::swap(&mut o, &mut self.delayed_accept.response);
+            if let Some(r) = o {
+                self.net.send_transaction_message(Message::AcceptResponse(r));
+            }
+        }
+    }
+
+    fn save_tx_state(&mut self, save_id: crl::TxSaveId) {
+
+        let object_updates = if self.save_object_updates {
+            let v: Vec<transaction::ObjectUpdate> = self.object_updates.iter().map(
+            |(object_id, data)| {
+                transaction::ObjectUpdate {
+                    object_id: *object_id,
+                    data: data.clone()
+                }
+            }).collect();
+            self.save_object_updates = false; // only do this once
+            Some(v)
+        } else {
+            None
+        };
+
+        self.crl.save_transaction_state(
+            self.store_id, 
+            self.txid, 
+            self.txd.serialized_transaction_description.clone(),
+            object_updates,
+            self.disposition,
+            self.acceptor.persistent_state(),
+            save_id);
     }
     
     pub fn receive_prepare(&mut self, msg: Prepare) {
@@ -165,44 +214,38 @@ impl Tx {
         match self.acceptor.receive_prepare(msg.proposal_id) {
             Ok(promise) => {
                 match self.disposition {
-                    Disposition::Undetermined => self.try_to_lock(),
-                    Disposition::VoteAbort => self.try_to_lock(),
+                    Disposition::Undetermined => {
+                        // The only way a prepare can be received while we are still undetermined
+                        // is if the local objects have not finished loading. Nothing to do.
+                        ()
+                    },
+                    Disposition::VoteAbort => {
+                        // We can change our disposition from VoteAbort to VoteCommit so lets
+                        // check again to see if a transient error cleared since our last
+                        // attempt
+                        self.determine_local_disposition();
+                    },
                     Disposition::VoteCommit => {
                         // Once we've decided to commit, we're committed to committing.
                         ()
                     }
                 }
 
-                let object_updates = if self.save_object_updates {
-                    let v: Vec<transaction::ObjectUpdate> = self.object_updates.iter().map(
-                    |(object_id, data)| {
-                        transaction::ObjectUpdate {
-                            object_id: *object_id,
-                            data: data.clone()
-                        }
-                    }).collect();
-                    Some(v)
-                } else {
-                    None
-                };
-
-                let save_id = self.last_prepare.save_id.next();
-
-                self.last_prepare = LastPrepare {
-                    from: msg.from,
+                let r = PrepareResponse {
+                    to: msg.from,
+                    from: self.store_id,
+                    txid: self.txid,
                     proposal_id: msg.proposal_id,
                     response: PrepareResult::Promise(promise.last_accepted),
-                    save_id
+                    disposition: self.disposition
                 };
 
-                self.crl.save_transaction_state(
-                    self.store_id, 
-                    self.txid, 
-                    self.txd.serialized_transaction_description.clone(),
-                    object_updates,
-                    self.disposition,
-                    self.acceptor.persistent_state(),
-                    save_id);
+                self.delayed_prepare = DelayedPrepareResponse {
+                    response: Some(r),
+                    save_id: self.get_save_id()
+                };
+
+                self.save_tx_state(self.delayed_prepare.save_id); 
             },
             Err(nack) => {
                 let r = PrepareResponse {
@@ -235,7 +278,12 @@ impl Tx {
             response
         };
 
-        self.net.send_transaction_message(Message::AcceptResponse(r));
+        self.delayed_accept = DelayedAcceptResponse {
+            response: Some(r),
+            save_id: self.get_save_id()
+        };
+
+        self.save_tx_state(self.delayed_accept.save_id); 
     }
 
     pub fn receive_resolved(&mut self, m: Resolved) {
