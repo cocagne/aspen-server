@@ -100,7 +100,7 @@ impl fmt::Display for DataUpdateOperation {
 }
 
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
     pub revision: Revision,
     pub refcount: Refcount,

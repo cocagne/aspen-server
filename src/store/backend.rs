@@ -36,6 +36,14 @@ impl Completion {
     }
 }
 
+pub struct CommitState {
+    pub id: object::Id,
+    pub store_pointer: Pointer,
+    pub metadata: object::Metadata,
+    pub object_kind: object::Kind,
+    pub data: sync::Arc<Vec<u8>>,
+}
+
 pub trait Backend {
 
     fn set_completion_handler(&mut self, handler: Box<dyn CompletionHandler>);
@@ -51,5 +59,5 @@ pub trait Backend {
 
     fn read(&self, locater: &Locater);
 
-    fn commit(&self, state: State, txid: transaction::Id);
+    fn commit(&self, state: CommitState, txid: transaction::Id);
 }

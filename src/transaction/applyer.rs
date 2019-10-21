@@ -12,7 +12,7 @@ use crate::transaction::requirements::*;
 
 use super::checker::get_objects_with_errors;
 
-pub struct SkippedObjects(HashSet<object::Id>);
+pub struct SkippedObjects(pub HashSet<object::Id>);
 
 /// Applies transaction operations to all objects specified in the transaction IFF they
 /// meet all the transaction requirements. 

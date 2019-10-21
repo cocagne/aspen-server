@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use time;
 
@@ -32,6 +33,7 @@ pub struct Tx {
     crl: Rc<dyn crl::Crl>,
     net: Rc<dyn network::Messenger>,
     acceptor: paxos::Acceptor,
+    tx_leader: store::Id,
     txd: transaction::TransactionDescription,
     pre_tx_rebuilds: Vec<PreTransactionOpportunisticRebuild>,
     object_updates: HashMap<object::Id, ArcDataSlice>,
@@ -45,7 +47,9 @@ pub struct Tx {
     delayed_accept: DelayedAcceptResponse,
     last_event: time::PreciseTime,
     save_object_updates: bool,
-    next_crl_save: crl::TxSaveId
+    next_crl_save: crl::TxSaveId,
+    skipped_commits: Vec<object::Id>,
+    committed: bool
 }
 
 impl Tx {
@@ -66,6 +70,7 @@ impl Tx {
             crl: crl.clone(),
             net: net.clone(),
             acceptor: paxos::Acceptor::new(store_id.pool_index, None),
+            tx_leader: prepare.txd.designated_leader_store_id(),
             txd: prepare.txd,
             pre_tx_rebuilds: prepare.pre_tx_rebuilds,
             object_updates: prepare.object_updates,
@@ -85,7 +90,9 @@ impl Tx {
             },
             last_event: time::PreciseTime::now(),
             save_object_updates: true,
-            next_crl_save: crl::TxSaveId(1)
+            next_crl_save: crl::TxSaveId(1),
+            skipped_commits: Vec::new(),
+            committed: false
         }
     }
 
@@ -112,28 +119,109 @@ impl Tx {
         }
     }
 
+    fn all_objects_loaded(&mut self) {
+
+        // Apply pre-transaction rebuilds
+        for p in &self.pre_tx_rebuilds {
+            if let Some(tsr) = self.objects.get(&p.object_id) {
+                let mut o = tsr.borrow_mut();
+                if o.metadata == p.required_metadata {
+                    let mut v = Vec::<u8>::with_capacity(p.data.len());
+                    v.extend_from_slice(p.data.as_bytes());
+                    o.data = Arc::new(v);
+                }
+            }
+        }
+
+        // Check for already resolved
+        if let Some(decision) = self.oresolution {
+            self.disposition = if decision {
+                Disposition::VoteCommit
+            } else {
+                Disposition::VoteAbort
+            };
+
+        } else {
+            self.determine_local_disposition();
+        }
+
+        let mut o = None;
+        std::mem::swap(&mut o, &mut self.delayed_prepare.response);
+
+        if let Some(mut r) = o {
+            r.disposition = self.disposition;
+            self.net.send_transaction_message(Message::PrepareResponse(r));
+        }
+    }
+
     fn on_resolution(&mut self, value:bool) {
         if self.oresolution.is_none() {
             self.oresolution = Some(value);
-        } 
-    }
-    
-    fn all_objects_loaded(&mut self) {
-        // Check to see if the tx is already resolved
 
-        // if 
+            if value {
+                let skipped_commits = transaction::applyer::apply_requirements(
+                    self.txid,
+                    self.txd.start_timestamp,
+                    &self.txd.requirements,
+                    &self.objects,
+                    &self.object_updates
+                );
+
+                for (object_id, state) in &self.objects {
+                    if skipped_commits.0.contains(object_id) {
+                        self.skipped_commits.push(*object_id);
+                    } else {
+                        self.pending_object_commits += 1;
+                        self.backend.commit(state.borrow().commit_state(), self.txid);
+                    }
+                }
+            }
+        } 
     }
 
     fn determine_local_disposition(&mut self) {
+        assert!(self.pending_object_loads == 0);
 
+        let r = transaction::checker::check_requirements(
+            self.txid, &self.txd.requirements, &self.objects, &self.object_updates);
+        
+        match r {
+            Err(_) => self.disposition = Disposition::VoteAbort,
+            Ok(_) => self.disposition = Disposition::VoteCommit
+        }
     }
 
     pub fn commit_complete(
         &mut self, 
         object_id: object::Id,
         result: Result<(), store::CommitError>) {
-        // This can be less than the total number of objects referenced by this store
-        // we skip ones with commit errors
+        
+        if result.is_err() {
+            self.skipped_commits.push(object_id);
+        }
+
+        if self.pending_object_commits != 0 {
+            self.pending_object_commits -= 1;
+        }
+
+        if self.pending_object_commits == 0 {
+            self.committed = true;
+            self.send_commit_message();
+        }
+    }
+
+    pub fn send_commit_message(&mut self) {
+
+        if self.committed {
+            let m = Committed {
+                to: self.tx_leader,
+                from: self.store_id,
+                txid: self.txid,
+                object_commit_errors: self.skipped_commits.clone()
+            };
+
+            self.net.send_transaction_message(Message::Committed(m));
+        }
     }
 
     pub fn crl_tx_save_complete(&mut self, save_id: crl::TxSaveId, success: bool) {
@@ -265,7 +353,13 @@ impl Tx {
         self.update_last_event();
 
         let response = match self.acceptor.receive_accept(m.proposal_id, m.value) {
-            Ok(accepted) => AcceptResult::Accepted(accepted.proposal_value),
+            Ok(accepted) => {
+                self.tx_leader = m.from; // Committed messages go here
+                if self.committed {
+                    self.send_commit_message();
+                }
+                AcceptResult::Accepted(accepted.proposal_value)
+            },
                 
             Err(nack) => AcceptResult::Nack(nack.promised_proposal_id)
         };
@@ -321,5 +415,89 @@ impl Tx {
         };
 
         self.net.send_transaction_message(Message::StatusResponse(r));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+    use std::sync;
+
+    use super::*;
+    use crate::ida::IDA;
+    use crate::object;
+    use crate::pool;
+    use crate::store;
+    use crate::transaction::checker;
+    use crate::transaction::*;
+    use crate::hlc;
+
+    #[test]
+    fn test_tx_ok() {
+        let txid = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let revid = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let poolid = uuid::Uuid::parse_str("03cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let objid = uuid::Uuid::parse_str("04cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
+        let sp0 = store::Pointer::None{pool_index: 0};
+        let sp1 = store::Pointer::None{pool_index: 1};
+
+        let oid = object::Id(objid);
+
+        let txid = transaction::Id(txid);
+        let ts1 = hlc::Timestamp::from(1);
+        let ts2 = hlc::Timestamp::from(2);
+
+        let metadata = object::Metadata {
+            revision: object::Revision(revid),
+            refcount: object::Refcount{update_serial: 0, count: 1},
+            timestamp: hlc::Timestamp::from(1)
+        };
+
+        let p = object::Pointer {
+            id: oid,
+            pool_id: pool::Id(poolid),
+            size: None,
+            ida: IDA::Replication{ width: 3, write_threshold: 2},
+            store_pointers: vec![sp0, sp1]
+        };
+
+        let reqs = vec![TransactionRequirement::DataUpdate{
+            pointer: p,
+            required_revision: object::Revision(revid),
+            operation: object::DataUpdateOperation::Overwrite
+        }];
+
+        let s = store::State {
+            id: oid,
+            store_pointer: store::Pointer::None{pool_index: 1},
+            metadata,
+            object_kind: object::Kind::Data,
+            transaction_references: 0,
+            locked_to_transaction: None,
+            data: sync::Arc::new(vec![]),
+            max_size: None,
+            kv_state: None
+        };
+
+        let txr = store::TxStateRef::new(&Rc::new(RefCell::new(s)));
+
+        assert_eq!(txr.borrow().transaction_references, 1);
+
+        let mut m = HashMap::new();
+        m.insert(oid, txr);
+
+        let mut u = HashMap::new();
+        u.insert(oid, ArcDataSlice::from_vec(vec![0u8, 1u8, 2u8]));
+
+        let r = checker::check_requirements(txid, &reqs, &m, &u);
+
+        assert!(r.is_ok());
+
+        assert_eq!(m.get(&oid).unwrap().borrow().data, Arc::new(Vec::<u8>::new()));
+        assert_eq!(m.get(&oid).unwrap().borrow().metadata.timestamp, ts1);
+
+        
     }
 }

@@ -170,6 +170,16 @@ impl State {
     pub fn kv_state(&mut self) -> Option<&mut Box<object::KVObjectState>> {
         self.kv_state.as_mut()
     }
+
+    pub fn commit_state(&self) -> backend::CommitState {
+        backend::CommitState {
+            id: self.id,
+            store_pointer: self.store_pointer.clone(),
+            metadata: self.metadata.clone(),
+            object_kind: self.object_kind,
+            data: self.data.clone()
+        }
+    }
 }
 
 /// Smart pointer for State objects that increment/decrement the state's

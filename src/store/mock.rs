@@ -67,7 +67,7 @@ impl backend::Backend for MockStore {
         });
     }
 
-    fn commit(&self, state: State, txid: transaction::Id) {
+    fn commit(&self, state: backend::CommitState, txid: transaction::Id) {
         
         let mut content = self.content.borrow_mut();
 
