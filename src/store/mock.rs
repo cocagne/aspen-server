@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::object;
 use super::backend;
@@ -7,6 +8,7 @@ use super::backend::Completion;
 use crate::store;
 use crate::transaction;
 use super::*;
+
 
 struct Obj {
     id: object::Id,
@@ -21,7 +23,24 @@ pub struct MockStore {
     content: RefCell<HashMap<object::Id, Obj>>,
 }
 
+struct NullHandler;
+
+impl backend::CompletionHandler for NullHandler {
+    fn complete(&self, op: Completion) {}
+}
+
+impl MockStore {
+    pub fn new(store_id: store::Id) -> Rc<dyn backend::Backend> {
+        Rc::new(MockStore{
+            store_id,
+            completion_handler: Box::new(NullHandler),
+            content: RefCell::new(HashMap::new())
+        })
+    }
+}
+
 impl backend::Backend for MockStore {
+
     fn set_completion_handler(&mut self, handler: Box<dyn backend::CompletionHandler>) {
         self.completion_handler = handler;
     }
