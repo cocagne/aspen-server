@@ -4,11 +4,13 @@ use std::rc::Rc;
 
 use either::{Either, Left, Right};
 
+use super::backend;
 use super::backend::{Backend, Completion};
 use super::ObjectCache;
 
 use crate::crl;
 use crate::network;
+use crate::network::client_messages;
 use crate::store;
 use crate::transaction;
 use crate::transaction::messages;
@@ -43,6 +45,11 @@ impl PendingReadCache {
     }
 }
 
+enum PendingAllocation {
+    Single(client_messages::AllocateResponse),
+    Multi(Vec<client_messages::AllocateResponse>)
+}
+
 pub struct Frontend {
     store_id: store::Id,
     backend: Rc<dyn Backend>,
@@ -53,6 +60,7 @@ pub struct Frontend {
     accept_cache: messages::MessageCache<messages::Accept>,
     resolved_cache: messages::MessageCache<messages::Resolved>,
     pending_reads: HashMap<object::Id, Box<Vec<Either<NetRead, TxRead>>>>,
+    pending_allocations: HashMap<transaction::Id, PendingAllocation>,
     transactions: HashMap<transaction::Id, transaction::tx::Tx>
 }
 
@@ -73,6 +81,7 @@ impl Frontend {
             accept_cache: messages::MessageCache::new(50),
             resolved_cache: messages::MessageCache::new(50),
             pending_reads: HashMap::new(),
+            pending_allocations: HashMap::new(),
             transactions: HashMap::new()
         }
     }
@@ -223,11 +232,12 @@ impl Frontend {
                 self.crl_tx_save_complete(transaction_id, save_id, success);
             },
             crl::Completion::AllocationSave {
+                transaction_id,
                 object_id,
                 success,
                 ..
             } => {
-                self.crl_alloc_save_complete(object_id, success);
+                self.crl_alloc_save_complete(transaction_id, object_id, success);
             }
         }
     }
@@ -243,8 +253,99 @@ impl Frontend {
         }
     }
 
-    fn crl_alloc_save_complete(&mut self, object_id: object::Id, success: bool) {
-        
+    pub fn allocate_object(&mut self, msg: client_messages::Allocate) {
+        let metadata = object::Metadata {
+            revision: object::Revision(msg.allocation_transaction_id.0),
+            refcount: msg.initial_refcount,
+            timestamp: msg.timestamp
+        };
+
+        let r = self.backend.allocate(msg.new_object_id, msg.kind, metadata, 
+            msg.data.clone(), msg.max_size);
+
+        match r {
+            Err(e) => {
+                let m = client_messages::AllocateResponse {
+                    to: msg.from,
+                    from: msg.to,
+                    allocation_transaction_id: msg.allocation_transaction_id,
+                    object_id: msg.new_object_id,
+                    result: Err(e)
+                };
+                self.net.send_client_message(client_messages::Message::AllocateResponse(m));
+            },
+            Ok(pointer) => {
+
+                let s = store::State {
+                    id: msg.new_object_id,
+                    store_pointer: pointer.clone(),
+                    metadata,
+                    object_kind: msg.kind,
+                    transaction_references: 1, // Ensure this stays in cache till alloc resolves
+                    locked_to_transaction: None,
+                    data: std::sync::Arc::new(msg.data.to_vec()),
+                    max_size: msg.max_size,
+                    kv_state: None
+                };
+
+                self.object_cache.insert(std::rc::Rc::new(std::cell::RefCell::new(s)));
+
+                let m = client_messages::AllocateResponse {
+                    to: msg.from,
+                    from: msg.to,
+                    allocation_transaction_id: msg.allocation_transaction_id,
+                    object_id: msg.new_object_id,
+                    result: Ok(pointer)
+                };
+
+                if let Some(pa) = self.pending_allocations.remove(&msg.allocation_transaction_id) {
+                    let mut v = match pa {
+                        PendingAllocation::Single(m1) => {
+                            let mut v = Vec::with_capacity(2);
+                            v.push(m1);
+                            v
+                        },
+                        PendingAllocation::Multi(v) => v
+                    };
+                    v.push(m);
+                    self.pending_allocations.insert(msg.allocation_transaction_id, 
+                        PendingAllocation::Multi(v));
+                } else {
+                    self.pending_allocations.insert(msg.allocation_transaction_id, 
+                        PendingAllocation::Single(m));
+                }
+            }
+        }   
+    }
+
+    fn crl_alloc_save_complete(
+        &mut self,
+        transaction_id: transaction::Id,
+        object_id: object::Id,
+        _success: bool) {
+
+        self.pending_allocations.get(&transaction_id).map(|pa| {
+            match pa {
+                PendingAllocation::Single(msg) => {
+                    self.net.send_client_message(client_messages::Message::AllocateResponse(msg.clone()));
+                },
+                PendingAllocation::Multi(v) => {
+                    for msg in v {
+                        if msg.object_id == object_id {
+                            self.net.send_client_message(client_messages::Message::AllocateResponse(msg.clone()));
+                            break;
+                        }
+                    }
+                }
+            } 
+        });
+    }
+
+    pub fn receive_client_message(&mut self, msg: client_messages::Message) {
+        match msg {
+            client_messages::Message::Allocate(m) => self.allocate_object(m),
+            _ => () 
+        }
     }
 
     pub fn receive_transaction_message(&mut self, msg: Message) {
@@ -254,6 +355,7 @@ impl Frontend {
                 self.transactions.get_mut(&m.txid).map(|tx| tx.receive_accept(m));
             },
             Message::Resolved(m) => {
+                self.receive_resolved(&m);
                 self.transactions.get_mut(&m.txid).map(|tx| tx.receive_resolved(m));
             },
             Message::Finalized(m) => {
@@ -266,6 +368,53 @@ impl Frontend {
                 self.transactions.get_mut(&m.txid).map(|tx| tx.receive_status_request(m));
             },
             _ => () // ignore
+        }
+    }
+
+    pub fn receive_resolved(&mut self, msg: &messages::Resolved) {
+        // Check to see if any allocations are part of this transaction
+        if let Some(pa) = self.pending_allocations.remove(&msg.txid) {
+            if msg.value {
+                let mut add = |m: client_messages::AllocateResponse| {
+                    let o = self.object_cache.get(&m.object_id).unwrap();
+                    let mut o = o.borrow_mut();
+
+                    o.transaction_references -= 1;
+
+                    let cs = backend::CommitState {
+                        id: m.object_id,
+                        store_pointer: o.store_pointer.clone(),
+                        metadata: o.metadata,
+                        object_kind: o.object_kind,
+                        data: o.data.clone()
+                    };
+
+                    self.backend.commit(cs, m.allocation_transaction_id);
+                };
+
+                match pa {
+                    PendingAllocation::Single(m) => add(m),
+                    PendingAllocation::Multi(v) => {
+                        for m in v {
+                            add(m);
+                        }
+                    }
+                }
+            } else {
+                let mut rem = |m: client_messages::AllocateResponse| {
+                    self.object_cache.remove(&m.object_id);
+                    self.backend.abort_allocation(m.object_id);
+                };
+
+                match pa {
+                    PendingAllocation::Single(m) => rem(m),
+                    PendingAllocation::Multi(v) => {
+                        for m in v {
+                            rem(m);
+                        }
+                    }
+                }
+            }
         }
     }
 

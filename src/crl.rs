@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync;
 
-use super::{ ArcData, ArcDataSlice };
+use super::ArcDataSlice;
 use super::hlc;
 use super::object;
 use super::paxos;
@@ -72,6 +72,7 @@ pub enum Completion {
     },
     AllocationSave {
         store_id: store::Id,
+        transaction_id: transaction::Id,
         object_id: object::Id,
         success: bool
     },

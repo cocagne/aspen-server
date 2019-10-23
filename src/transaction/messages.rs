@@ -26,7 +26,7 @@ pub struct PreTransactionOpportunisticRebuild {
     pub object_id: object::Id,
     pub required_metadata: object::Metadata,
     pub data: ArcDataSlice
-}
+}   
 
 pub struct Prepare {
     pub to: store::Id,

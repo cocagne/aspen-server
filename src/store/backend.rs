@@ -1,11 +1,12 @@
 
 use std::sync;
 
+use crate::data::ArcDataSlice;
 use crate::object;
 use crate::store;
 use crate::transaction;
 
-use super::{Pointer, AllocationError, Locater, State};
+use super::{Pointer, AllocationError, Locater};
 
 pub trait CompletionHandler {
     fn complete(&self, op: Completion);
@@ -53,9 +54,11 @@ pub trait Backend {
         id: object::Id,
         object_kind: object::Kind,
         metadata: object::Metadata,
-        data: sync::Arc<Vec<u8>>,
+        data: ArcDataSlice,
         max_size: Option<u32>
     ) -> Result<Pointer, AllocationError>;
+
+    fn abort_allocation(&self, object_id: object::Id);
 
     fn read(&self, locater: &Locater);
 

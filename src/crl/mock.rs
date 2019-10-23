@@ -17,7 +17,7 @@ struct RegisterClientResponse {
 
 enum Request {
     Tx(ClientId, store::Id, transaction::Id, TxSaveId),
-    Alloc(ClientId, store::Id, object::Id),
+    Alloc(ClientId, store::Id, transaction::Id, object::Id),
     RegisterClientRequest {
         sender: crossbeam_channel::Sender<RegisterClientResponse>,
         handler: sync::Arc<dyn RequestCompletionHandler + Send + Sync>
@@ -48,9 +48,9 @@ fn io_thread(receiver: crossbeam_channel::Receiver<Request>) {
                 clients[client.0].complete(
                     Completion::TransactionSave { store_id, transaction_id, save_id, success:true })
             },
-            Request::Alloc(client, store_id, object_id) => {
+            Request::Alloc(client, store_id, transaction_id, object_id) => {
                 clients[client.0].complete(
-                    Completion::AllocationSave { store_id, object_id, success:true })
+                    Completion::AllocationSave { store_id, transaction_id, object_id, success:true })
             },
             Request::RegisterClientRequest {
                 sender,
@@ -144,11 +144,11 @@ impl crate::crl::Crl for Frontend {
         _data: ArcDataSlice,
         _refcount: object::Refcount,
         _timestamp: hlc::Timestamp,
-        _allocation_transaction_id: transaction::Id,
+        allocation_transaction_id: transaction::Id,
         _serialized_revision_guard: ArcDataSlice
     ) {
         // Explicitly ignore any errors
-        let _ = self.sender.send(Request::Alloc(self.client_id, store_id, id));
+        let _ = self.sender.send(Request::Alloc(self.client_id, store_id, allocation_transaction_id, id));
     }
 
     fn delete_allocation_state(

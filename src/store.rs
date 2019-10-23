@@ -222,6 +222,9 @@ pub trait ObjectCache {
     /// Inserts the given State object and optionally displaces one from
     /// the cache
     fn insert(&mut self, state: Rc<RefCell<State>>) -> Option<Rc<RefCell<State>>>;
+
+    /// Used only for aborted allocations
+    fn remove(&mut self, object_id: &object::Id);
 }
 
 #[derive(Debug, Clone)]

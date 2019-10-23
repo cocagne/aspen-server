@@ -4,6 +4,8 @@ use crate::object;
 use crate::store;
 use crate::transaction;
 
+pub mod client_messages;
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct ClientId(uuid::Uuid);
 
@@ -19,4 +21,6 @@ pub trait Messenger {
         result: Result<store::ReadState, store::ReadError>);
 
     fn send_transaction_message(&self, msg: transaction::Message);
+
+    fn send_client_message(&self, msg: client_messages::Message);
 }

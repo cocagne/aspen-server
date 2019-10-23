@@ -33,6 +33,13 @@ impl SimpleCache {
 
 impl ObjectCache for SimpleCache {
 
+    fn remove(&mut self, object_id: &object::Id) {
+        // Just remove the entry from the lookup index. To keep ownership simple,
+        // we'll leave it in the LRU chain and let it fall off the end naturally
+        // since it can no longer be accessed.
+        self.lookup.remove(object_id);
+    }
+    
     fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
         if self.entries.is_empty() {
             None

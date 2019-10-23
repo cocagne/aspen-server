@@ -659,12 +659,14 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                         },
                         Completion::AllocSave {
                             client_id, 
-                            store_id, 
+                            store_id,
+                            transaction_id,
                             object_id 
                         } => {
                             state.completion_handlers[client_id.0].complete(
                                 crl::Completion::AllocationSave {
                                     store_id: *store_id,
+                                    transaction_id: *transaction_id,
                                     object_id: *object_id, 
                                     success
                                 }
@@ -701,13 +703,15 @@ fn io_thread(log_state: Arc<Mutex<LogState>>, mut stream: Box<dyn FileStream>, m
                                         )
                                     },
                                     Completion::AllocSave {
-                                        client_id, 
+                                        client_id,
+                                        transaction_id,
                                         store_id, 
                                         object_id 
                                     } => {
                                         state.completion_handlers[client_id.0].complete(
                                             crl::Completion::AllocationSave {
                                                 store_id,
+                                                transaction_id,
                                                 object_id, 
                                                 success: psuccess
                                             }
@@ -736,7 +740,8 @@ enum Completion {
         save_id: TxSaveId 
     },
     AllocSave { 
-        client_id: ClientId, 
+        client_id: ClientId,
+        transaction_id: transaction::Id,
         store_id: store::Id, 
         object_id: object::Id
     }
@@ -857,7 +862,8 @@ impl Entry {
             self.size += asize;
             if let Some(cr) = req {
                 self.requests.push(Completion::AllocSave {
-                    client_id: cr.client_id, 
+                    client_id: cr.client_id,
+                    transaction_id: tx_id.1,
                     store_id: cr.store_id, 
                     object_id
                 });

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::data::ArcDataSlice;
 use crate::object;
 use super::backend;
 use super::backend::Completion;
@@ -26,7 +27,7 @@ pub struct MockStore {
 struct NullHandler;
 
 impl backend::CompletionHandler for NullHandler {
-    fn complete(&self, op: Completion) {}
+    fn complete(&self, _: Completion) {}
 }
 
 impl MockStore {
@@ -50,7 +51,7 @@ impl backend::Backend for MockStore {
         id: object::Id,
         object_kind: object::Kind,
         metadata: object::Metadata,
-        data: sync::Arc<Vec<u8>>,
+        data: ArcDataSlice,
         _max_size: Option<u32>
     ) -> Result<Pointer, AllocationError> {
 
@@ -60,9 +61,14 @@ impl backend::Backend for MockStore {
             id,
             metadata,
             object_kind,
-            data,
+            data: sync::Arc::new(data.to_vec()),
         });
         Ok(Pointer::None{pool_index: 0})
+    }
+
+    fn abort_allocation(&self, object_id: object::Id) {
+        let mut content = self.content.borrow_mut();
+        content.remove(&object_id);
     }
 
     fn read(&self, locater: &Locater) {

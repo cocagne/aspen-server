@@ -103,7 +103,7 @@ fn initialization() {
 fn recovery() {
     let tdir = TempDir::new("test").unwrap();
 
-    let mut t = setup(&tdir, 3 * 4096);
+    let t = setup(&tdir, 3 * 4096);
 
     let uu1 = uuid::Uuid::parse_str("01cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
     let uu2 = uuid::Uuid::parse_str("02cccd1b-e34e-4193-ad62-868a964eab9c").unwrap();
@@ -209,7 +209,7 @@ fn recovery() {
     
     drop(t);
 
-    let mut t = setup(&tdir, 3 * 4096);
+    let t = setup(&tdir, 3 * 4096);
 
     let (vtx, va) = t.crl.get_full_recovery_state(t.store_id);
 
@@ -265,7 +265,7 @@ fn recovery() {
     
     drop(t);
 
-    let mut t = setup(&tdir, 3 * 4096);
+    let t = setup(&tdir, 3 * 4096);
 
     let (vtx, va) = t.crl.get_full_recovery_state(t.store_id);
 

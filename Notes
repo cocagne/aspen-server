@@ -1,30 +1,16 @@
-* PrepareResult cache
-    - Could keep one of these in the store::Frontend similar to PendingRead cache
-        - Recycle Vectors of messages similar to PRCache
-    - Allows creation of Tx on reception of first Prepare message
-    - Always start load of objects after creation via Prepare message
-    - Call objects_loaded() after all objects are loaded into Tx
-        - check after read completion handler has run
-        - *** how to handle multiple tx loading the same object?
+* Add object allocation support
+
+* Do integration tests w/ Frontend class directly
+    - Send and receive messages in needed order to excercise code
+    - Mock backend for checking Tx results
+
+* Need Txd serialization/unserialization for load from saved state
+    - Flatbuffers
 
 * Add max_object_size() to DataStore backend, proxy call through Frontend
     - Allows easy size checking during req checks 
     - Size in pointer is for the client
     - Size should be available in the StoragePool object too
-
-* Need to define how transaction must work before trying to code it
-
-* Start with resolution & finalized messages
-    - These define the end state 
-    - Use this to trigger the commit process
-    - Add tests
-
-* Next add support for learner learning of resolution
-    - With and without having local updates
-    - Add tests
-
-* Add support for prepare messages
-    - only update timestamp with pid > 2 (see comments in scala)
 
 -----------------------------
 * Need base transaction implementation

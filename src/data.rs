@@ -232,7 +232,7 @@ impl ArcDataSlice {
     pub fn from_bytes(buff: &[u8]) -> ArcDataSlice {
         let mut v = Vec::<u8>::with_capacity(buff.len());
         
-        buff.iter().for_each(|b| v.push(*b));
+        v.extend_from_slice(buff);
         
         ArcDataSlice {
             buffer: Arc::new(v),
@@ -255,6 +255,12 @@ impl ArcDataSlice {
 
     pub fn len(&self) -> usize {
         self.end - self.begin
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(self.len());
+        v.extend_from_slice(self.as_bytes());
+        v
     }
 }
 
