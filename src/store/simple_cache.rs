@@ -29,9 +29,20 @@ impl SimpleCache {
             lookup: HashMap::new()
         }
     }
+
+    pub fn new_trait_object(max_entries: usize) -> Box<dyn ObjectCache> {
+        Box::new(SimpleCache::new(max_entries))
+    }
 }
 
 impl ObjectCache for SimpleCache {
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.lookup.clear();
+        self.least_recently_used = 0;
+        self.most_recently_used = 0;
+    }
 
     fn remove(&mut self, object_id: &object::Id) {
         // Just remove the entry from the lookup index. To keep ownership simple,
@@ -39,7 +50,7 @@ impl ObjectCache for SimpleCache {
         // since it can no longer be accessed.
         self.lookup.remove(object_id);
     }
-    
+
     fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
         if self.entries.is_empty() {
             None

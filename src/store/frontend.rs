@@ -9,6 +9,7 @@ use super::backend::{Backend, Completion};
 use super::ObjectCache;
 
 use crate::crl;
+use crate::data::ArcDataSlice;
 use crate::network;
 use crate::network::client_messages;
 use crate::store;
@@ -88,6 +89,10 @@ impl Frontend {
 
     pub fn id(&self) -> store::Id {
         self.store_id
+    }
+
+    pub fn clear_cache(&mut self) {
+        self.object_cache.clear();
     }
 
     pub fn backend_complete(&mut self, completion: Completion) {
@@ -276,6 +281,8 @@ impl Frontend {
             },
             Ok(pointer) => {
 
+                let data = std::sync::Arc::new(msg.data.to_vec());
+
                 let s = store::State {
                     id: msg.new_object_id,
                     store_pointer: pointer.clone(),
@@ -283,7 +290,7 @@ impl Frontend {
                     object_kind: msg.kind,
                     transaction_references: 1, // Ensure this stays in cache till alloc resolves
                     locked_to_transaction: None,
-                    data: std::sync::Arc::new(msg.data.to_vec()),
+                    data: data.clone(),
                     max_size: msg.max_size,
                     kv_state: None
                 };
@@ -295,7 +302,7 @@ impl Frontend {
                     from: msg.to,
                     allocation_transaction_id: msg.allocation_transaction_id,
                     object_id: msg.new_object_id,
-                    result: Ok(pointer)
+                    result: Ok(pointer.clone())
                 };
 
                 if let Some(pa) = self.pending_allocations.remove(&msg.allocation_transaction_id) {
@@ -314,6 +321,19 @@ impl Frontend {
                     self.pending_allocations.insert(msg.allocation_transaction_id, 
                         PendingAllocation::Single(m));
                 }
+
+                self.crl.save_allocation_state(
+                    self.store_id,
+                    pointer.clone(),
+                    msg.new_object_id,
+                    msg.kind,
+                    msg.max_size,
+                    ArcDataSlice::from_bytes(&data[..]),
+                    msg.initial_refcount,
+                    msg.timestamp,
+                    msg.allocation_transaction_id,
+                    ArcDataSlice::from_vec(Vec::new()) // FIXME Replace with serialized guard
+                );
             }
         }   
     }
@@ -388,7 +408,7 @@ impl Frontend {
                         object_kind: o.object_kind,
                         data: o.data.clone()
                     };
-
+                    
                     self.backend.commit(cs, m.allocation_transaction_id);
                 };
 
@@ -423,8 +443,11 @@ impl Frontend {
         let txid = msg.txd.id;
 
         match self.transactions.get_mut(&txid) {
-            Some(tx) => tx.receive_prepare(msg),
+            Some(tx) => tx.receive_prepare(msg.from, msg.proposal_id),
             None => {
+
+                let from = msg.from;
+                let proposal_id = msg.proposal_id;
 
                 let object_locaters = msg.txd.hosted_objects(self.store_id);
 
@@ -461,6 +484,8 @@ impl Frontend {
                 for p in loaded {
                     tx.object_loaded(&p);
                 }
+
+                tx.receive_prepare(from, proposal_id);
 
                 self.transactions.insert(txid, tx);
             }

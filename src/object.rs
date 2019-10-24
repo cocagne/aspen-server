@@ -118,8 +118,8 @@ pub struct Pointer {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllocationRevisionGuard {
-    pointer: Pointer,
-    required_revision: Revision
+    pub pointer: Pointer,
+    pub required_revision: Revision
 }
 
 /// Identifies a key within a data buffer. Used to decouple references when

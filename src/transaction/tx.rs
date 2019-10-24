@@ -288,18 +288,18 @@ impl Tx {
             save_id);
     }
     
-    pub fn receive_prepare(&mut self, msg: Prepare) {
+    pub fn receive_prepare(&mut self, from: store::Id, proposal_id: paxos::ProposalId) {
 
         // Proposal ID 1 is always sent by the client initiating the transaction. We don't want to update
         // the timestamp for this since the client can't drive the transaction to completion and it'll
         // continually re-transmit the request to work around connection issues. Prepares sent by stores,
         // which will use a proposalId > 1 should up the the timestamp so we don't time out and also
         // attempt to drive the transaction forward.
-        if msg.proposal_id.number != 1 {
+        if proposal_id.number != 1 {
             self.update_last_event();
         }
 
-        match self.acceptor.receive_prepare(msg.proposal_id) {
+        match self.acceptor.receive_prepare(proposal_id) {
             Ok(promise) => {
                 match self.disposition {
                     Disposition::Undetermined => {
@@ -320,10 +320,10 @@ impl Tx {
                 }
 
                 let r = PrepareResponse {
-                    to: msg.from,
+                    to: from,
                     from: self.store_id,
                     txid: self.txid,
-                    proposal_id: msg.proposal_id,
+                    proposal_id: proposal_id,
                     response: PrepareResult::Promise(promise.last_accepted),
                     disposition: self.disposition
                 };
@@ -332,15 +332,15 @@ impl Tx {
                     response: Some(r),
                     save_id: self.get_save_id()
                 };
-
+                
                 self.save_tx_state(self.delayed_prepare.save_id); 
             },
             Err(nack) => {
                 let r = PrepareResponse {
-                    to: msg.from,
+                    to: from,
                     from: self.store_id,
                     txid: self.txid,
-                    proposal_id: msg.proposal_id,
+                    proposal_id: proposal_id,
                     response: PrepareResult::Nack(nack.promised_proposal_id),
                     disposition: self.disposition
                 };

@@ -134,8 +134,8 @@ impl fmt::Display for Pointer {
 /// Pair of the object Id and optional store pointer
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Locater {
-    object_id: object::Id,
-    pointer: Pointer
+    pub object_id: object::Id,
+    pub pointer: Pointer
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -213,10 +213,12 @@ impl Deref for TxStateRef {
     }
 }
 
-
-
 /// Public interface for object cache implementations
 pub trait ObjectCache {
+
+    /// Clears the cache. Primarily intended for testing
+    fn clear(&mut self);
+
     fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>>;
 
     /// Inserts the given State object and optionally displaces one from
@@ -229,8 +231,8 @@ pub trait ObjectCache {
 
 #[derive(Debug, Clone)]
 pub struct ReadState {
-    id: object::Id,
-    metadata: object::Metadata,
-    object_kind: object::Kind,
-    data: sync::Arc<Vec<u8>>,
+    pub id: object::Id,
+    pub metadata: object::Metadata,
+    pub object_kind: object::Kind,
+    pub data: sync::Arc<Vec<u8>>,
 }

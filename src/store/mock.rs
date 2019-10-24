@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use crate::data::ArcDataSlice;
 use crate::object;
@@ -31,12 +30,12 @@ impl backend::CompletionHandler for NullHandler {
 }
 
 impl MockStore {
-    pub fn new(store_id: store::Id) -> Rc<dyn backend::Backend> {
-        Rc::new(MockStore{
+    pub fn new(store_id: store::Id) -> MockStore {
+        MockStore{
             store_id,
             completion_handler: Box::new(NullHandler),
             content: RefCell::new(HashMap::new())
-        })
+        }
     }
 }
 

@@ -1,3 +1,5 @@
+***** FIX - Once serialization is done replace revision guard in crl.save_allocation_state call
+
 * Add object allocation support
 
 * Do integration tests w/ Frontend class directly

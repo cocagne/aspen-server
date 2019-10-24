@@ -21,6 +21,7 @@ use super::transaction;
 
 pub mod sweeper;
 pub mod mock;
+pub mod null;
 
 #[derive(Debug)]
 struct DecodeError;

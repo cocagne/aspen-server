@@ -5,12 +5,13 @@ use crate::store;
 use crate::transaction;
 
 pub mod client_messages;
+pub mod null;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
-pub struct ClientId(uuid::Uuid);
+pub struct ClientId(pub uuid::Uuid);
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
-pub struct RequestId(uuid::Uuid);
+pub struct RequestId(pub uuid::Uuid);
 
 pub trait Messenger {
     fn send_read_response(
