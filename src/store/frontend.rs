@@ -156,11 +156,23 @@ impl Frontend {
                     self.pr_cache.recycle(vpr);
                 }
             },
-            Err(_) => {
+            Err(e) => {
         
                 if let Some(vpr) = self.pending_reads.remove(&object_id) {
 
-                    // TODO do something with the error message
+                    for pr in vpr.iter() {
+                        match pr {
+                            Left(net_read) => {
+                                self.net.send_read_response(net_read.client_id, 
+                                    net_read.request_id, object_id, Err(e));
+                            },
+                            Right(tx_read) => {
+                                if let Some(tx) = self.transactions.get_mut(&tx_read.transaction_id) {
+                                    tx.object_load_failed(&object_id);
+                                }
+                            }
+                        }
+                    }
 
                     self.pr_cache.recycle(vpr);
                 }

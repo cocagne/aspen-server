@@ -119,6 +119,15 @@ impl Tx {
         }
     }
 
+    pub fn object_load_failed(&mut self, _object_id: &object::Id) {
+
+        self.pending_object_loads -= 1;
+
+        if self.pending_object_loads == 0 {
+            self.all_objects_loaded()
+        }
+    }
+
     fn all_objects_loaded(&mut self) {
 
         // Apply pre-transaction rebuilds

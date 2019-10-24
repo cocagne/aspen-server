@@ -37,7 +37,7 @@ pub enum Message {
     },
     LoadStore {
         store_id: store::Id,
-        load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
+        load_fn: Box<dyn Fn() -> Result<Box<dyn backend::Backend>, String>>,
         handler: Box<dyn StoreLoadCompletionHandler>
     }
 
@@ -117,7 +117,7 @@ impl StoreManager {
     fn load_store(
         &mut self,
         _store_id: store::Id, 
-        _load_fn: Box<Fn() -> Result<Box<dyn backend::Backend>, String>>,
+        _load_fn: Box<dyn Fn() -> Result<Box<dyn backend::Backend>, String>>,
         _handler: Box<dyn StoreLoadCompletionHandler>) {
 
         

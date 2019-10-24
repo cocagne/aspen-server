@@ -357,3 +357,187 @@ fn successful_transaction() {
     assert_eq!(r.data, std::sync::Arc::new(vec![0u8, 1u8, 2u8]));
 }
 
+#[test]
+fn successful_transaction_on_allocating_object() {
+    let mut ts = TS::new();
+
+    ts.alloc(ts.txid1, ts.oid1, true, vec![0u8]);
+
+    let r = ts.forwarding_read(ts.oid1);
+
+    let txd = transaction::TransactionDescription {
+        id: ts.txid2,
+        serialized_transaction_description: ArcDataSlice::from_vec(Vec::new()),
+        start_timestamp: hlc::Timestamp::from(3),
+        primary_object: ts.get_ptr(&ts.oid1),
+        designated_leader: 1,
+        requirements: vec![transaction::requirements::TransactionRequirement::DataUpdate{
+            pointer : ts.get_ptr(&ts.oid1),
+            required_revision: r.metadata.revision,
+            operation: object::DataUpdateOperation::Append
+        }],
+        finalization_actions: Vec::new(),
+        originating_client: None,
+        notify_on_resolution: Vec::new(),
+        notes: Vec::new()
+    };
+
+    let mut object_updates = HashMap::new();
+
+    object_updates.insert(ts.oid1, ArcDataSlice::from_vec(vec![2u8]));
+
+    let p = transaction::messages::Prepare {
+        to: ts.store_id,
+        from: ts.store_id,
+        proposal_id: aspen_server::paxos::ProposalId::initial_proposal_id(0),
+        txd,
+        object_updates,
+        pre_tx_rebuilds: vec![transaction::messages::PreTransactionOpportunisticRebuild {
+            object_id: ts.oid1,
+            required_metadata: r.metadata,
+            data: ArcDataSlice::from_vec(vec![0u8, 1u8])
+        }]
+    };
+
+    ts.front.receive_transaction_message(transaction::messages::Message::Prepare(p));
+
+    assert_eq!(ts.net_state.borrow().txs.len(), 0);
+
+    ts.front.crl_complete(crl::Completion::TransactionSave{
+        store_id: ts.store_id,
+        transaction_id: ts.txid2,
+        save_id: crl::TxSaveId(1),
+        success: true
+    });
+
+    match ts.net_state.borrow_mut().txs.pop().unwrap() {
+        transaction::Message::PrepareResponse(r) => {
+            assert_eq!(r.disposition, transaction::Disposition::VoteCommit);
+        },
+        _ => panic!("Wrong message type")
+    }
+
+    let r = transaction::messages::Resolved {
+        to: ts.store_id,
+        from: ts.store_id,
+        txid: ts.txid2,
+        value: true
+    };
+
+    ts.front.receive_transaction_message(transaction::messages::Message::Resolved(r));
+
+    let r = ts.forwarding_read(ts.oid1);
+
+    assert_eq!(r.id, ts.oid1);
+    assert_eq!(r.metadata.revision, object::Revision(ts.txid2.0));
+    assert_eq!(r.metadata.refcount, object::Refcount {
+        update_serial: 0,
+        count: 1
+    });
+    assert_eq!(r.metadata.timestamp, hlc::Timestamp::from(3));
+    assert_eq!(r.object_kind, object::Kind::Data);
+    assert_eq!(r.data, std::sync::Arc::new(vec![0u8, 1u8, 2u8]));
+}
+
+#[test]
+fn successful_transaction_with_local_errors() {
+    let mut ts = TS::new();
+
+    ts.alloc(ts.txid1, ts.oid1, true, vec![0u8]);
+
+    let r = transaction::messages::Resolved {
+        to: ts.store_id,
+        from: ts.store_id,
+        txid: ts.txid1,
+        value: true
+    };
+
+    ts.front.receive_transaction_message(transaction::messages::Message::Resolved(r));
+
+    let r = ts.forwarding_read(ts.oid1);
+
+    let mut p2 = ts.get_ptr(&ts.oid1);
+    p2.id = ts.oid2;
+
+    let txd = transaction::TransactionDescription {
+        id: ts.txid2,
+        serialized_transaction_description: ArcDataSlice::from_vec(Vec::new()),
+        start_timestamp: hlc::Timestamp::from(3),
+        primary_object: ts.get_ptr(&ts.oid1),
+        designated_leader: 1,
+        requirements: vec![
+            transaction::requirements::TransactionRequirement::DataUpdate{
+                pointer : ts.get_ptr(&ts.oid1),
+                required_revision: r.metadata.revision,
+                operation: object::DataUpdateOperation::Append
+            },
+            transaction::requirements::TransactionRequirement::DataUpdate{
+                pointer : p2,
+                required_revision: r.metadata.revision,
+                operation: object::DataUpdateOperation::Append
+            }],
+        finalization_actions: Vec::new(),
+        originating_client: None,
+        notify_on_resolution: Vec::new(),
+        notes: Vec::new()
+    };
+
+    let mut object_updates = HashMap::new();
+
+    object_updates.insert(ts.oid1, ArcDataSlice::from_vec(vec![2u8]));
+
+    let p = transaction::messages::Prepare {
+        to: ts.store_id,
+        from: ts.store_id,
+        proposal_id: aspen_server::paxos::ProposalId::initial_proposal_id(0),
+        txd,
+        object_updates,
+        pre_tx_rebuilds: vec![transaction::messages::PreTransactionOpportunisticRebuild {
+            object_id: ts.oid1,
+            required_metadata: r.metadata,
+            data: ArcDataSlice::from_vec(vec![0u8, 1u8])
+        }]
+    };
+
+    ts.front.receive_transaction_message(transaction::messages::Message::Prepare(p));
+
+    assert_eq!(ts.net_state.borrow().txs.len(), 0);
+
+    ts.forward_backend_completions();
+
+    ts.front.crl_complete(crl::Completion::TransactionSave{
+        store_id: ts.store_id,
+        transaction_id: ts.txid2,
+        save_id: crl::TxSaveId(1),
+        success: true
+    });
+
+    match ts.net_state.borrow_mut().txs.pop().unwrap() {
+        transaction::Message::PrepareResponse(r) => {
+            assert_eq!(r.disposition, transaction::Disposition::VoteAbort);
+        },
+        _ => panic!("Wrong message type")
+    }
+
+    let r = transaction::messages::Resolved {
+        to: ts.store_id,
+        from: ts.store_id,
+        txid: ts.txid2,
+        value: true
+    };
+
+    ts.front.receive_transaction_message(transaction::messages::Message::Resolved(r));
+
+    let r = ts.forwarding_read(ts.oid1);
+
+    assert_eq!(r.id, ts.oid1);
+    assert_eq!(r.metadata.revision, object::Revision(ts.txid2.0));
+    assert_eq!(r.metadata.refcount, object::Refcount {
+        update_serial: 0,
+        count: 1
+    });
+    assert_eq!(r.metadata.timestamp, hlc::Timestamp::from(3));
+    assert_eq!(r.object_kind, object::Kind::Data);
+    assert_eq!(r.data, std::sync::Arc::new(vec![0u8, 1u8, 2u8]));
+}
+
