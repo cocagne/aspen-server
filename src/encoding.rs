@@ -15,6 +15,7 @@ use crate::ida;
 use crate::object;
 use crate::store;
 use crate::pool;
+use crate::hlc;
 
 pub fn decode_uuid(o: &protocol::UUID) -> uuid::Uuid {
     let mut d = data::DataMut::with_capacity(16);
@@ -219,4 +220,127 @@ pub fn encode_transaction_distposition(o: transaction::Disposition) -> protocol:
         transaction::Disposition::VoteAbort => protocol::TransactionDisposition::VoteAbort,
         transaction::Disposition::VoteCommit => protocol::TransactionDisposition::VoteCommit
     }
+}
+
+pub fn decode_data_update_operation(o: protocol::DataUpdateOperation) -> object::DataUpdateOperation {
+    match o {
+        protocol::DataUpdateOperation::Append => object::DataUpdateOperation::Append,
+        protocol::DataUpdateOperation::Overwrite => object::DataUpdateOperation::Overwrite,
+    }
+}
+pub fn encode_data_update_operation(o: object::DataUpdateOperation) -> protocol::DataUpdateOperation {
+    match o {
+        object::DataUpdateOperation::Append => protocol::DataUpdateOperation::Append,
+        object::DataUpdateOperation::Overwrite => protocol::DataUpdateOperation::Overwrite,
+    }
+}
+
+pub fn decode_key_requirement(o: protocol::KVReq) -> requirements::KeyRequirement {
+    let key = object::Key::from_bytes(std::mem::transmute::<&[i8], &[u8]>(o.key().unwrap()));
+    let timestamp = hlc::Timestamp::from(o.timestamp() as u64);
+    match o.requirement() {
+        protocol::KeyRequirement::Exists => requirements::KeyRequirement::Exists { key },
+        protocol::KeyRequirement::MayExist => requirements::KeyRequirement::MayExist { key },
+        protocol::KeyRequirement::DoesNotExist => requirements::KeyRequirement::DoesNotExist { key },
+        protocol::KeyRequirement::TimestampLessThan => requirements::KeyRequirement::TimestampLessThan { key, timestamp },
+        protocol::KeyRequirement::TimestampGreaterThan => requirements::KeyRequirement::TimestampGreaterThan { key, timestamp },
+        protocol::KeyRequirement::TimestampEquals => requirements::KeyRequirement::TimestampEquals { key, timestamp },
+        protocol::KeyRequirement::KeyRevision => {
+            requirements::KeyRequirement::KeyRevision { 
+                key,
+                revision: decode_object_revision(o.revision().unwrap())
+            }
+        },
+        protocol::KeyRequirement::KeyObjectRevision => {
+            requirements::KeyRequirement::KeyObjectRevision { 
+                key,
+                revision: decode_object_revision(o.revision().unwrap())
+            }
+        }
+        protocol::KeyRequirement::WithinRange => {
+            requirements::KeyRequirement::WithinRange {
+                key,
+                comparison: decode_key_comparison(o.comparison())
+            }
+        }
+    }
+} 
+pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+    o: &requirements::KeyRequirement) -> flatbuffers::WIPOffset<protocol::KVReq<'bldr>> {
+
+    let args = match o {
+        requirements::KeyRequirement::Exists{ key } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::Exists,
+                timestamp: 0,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::MayExist{ key } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::MayExist,
+                timestamp: 0,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::DoesNotExist{ key } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::DoesNotExist,
+                timestamp: 0,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::TimestampLessThan{ key, timestamp } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::TimestampLessThan,
+                timestamp: timestamp.to_u64() as i64,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::TimestampGreaterThan{ key, timestamp } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::TimestampGreaterThan,
+                timestamp: timestamp.to_u64() as i64,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::TimestampEquals{ key, timestamp } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::TimestampEquals,
+                timestamp: timestamp.to_u64() as i64,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::KeyRevision{ key, revision } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::KeyRevision,
+                timestamp: 0,
+                revision: Some(&encode_object_revision(revision)),
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::WithinRange{ key, comparison } => {
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::WithinRange,
+                timestamp: 0,
+                revision: None,
+                comparison: encode_key_comparison(*comparison),
+                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+            }
+        },
+    };
+    protocol::KVReq::create(builder, &args)
 }

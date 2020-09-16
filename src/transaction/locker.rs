@@ -41,31 +41,27 @@ fn lock_kv_requirements(
 
     let kv = s.kv_state.as_mut().unwrap();
 
-    let cvt = |key: &Key| -> object::Key {
-        object::Key::from_bytes(key.as_bytes())
-    };
-
     for r in key_requirements {
         match r {
             KeyRequirement::Exists{key} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = Some(tx_id);
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = Some(tx_id);
             },
             KeyRequirement::MayExist{key} => {
-                if let Some(s) = kv.content.get_mut(&cvt(key)) {
+                if let Some(s) = kv.content.get_mut(&key) {
                     s.locked_to_transaction = Some(tx_id);
                 }
             },
             KeyRequirement::DoesNotExist{key} => {
-                kv.no_existence_locks.insert(cvt(key));
+                kv.no_existence_locks.insert(*key);
             },
             KeyRequirement::TimestampLessThan{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = Some(tx_id)
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = Some(tx_id)
             },
             KeyRequirement::TimestampGreaterThan{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = Some(tx_id)
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = Some(tx_id)
             },
             KeyRequirement::TimestampEquals{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = Some(tx_id)
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = Some(tx_id)
             },
         }
     }
@@ -104,31 +100,27 @@ fn unlock_kv_requirements(
 
     let kv = s.kv_state.as_mut().unwrap();
 
-    let cvt = |key: &Key| -> object::Key {
-        object::Key::from_bytes(key.as_bytes())
-    };
-
     for r in key_requirements {
         match r {
             KeyRequirement::Exists{key} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = None;
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = None;
             },
             KeyRequirement::MayExist{key} => {
-                if let Some(s) = kv.content.get_mut(&cvt(key)) {
+                if let Some(s) = kv.content.get_mut(&key) {
                     s.locked_to_transaction = None;
                 }
             },
             KeyRequirement::DoesNotExist{key} => {
-                kv.no_existence_locks.remove(&cvt(key));
+                kv.no_existence_locks.remove(&key);
             },
             KeyRequirement::TimestampLessThan{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = None
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = None
             },
             KeyRequirement::TimestampGreaterThan{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = None
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = None
             },
             KeyRequirement::TimestampEquals{key, ..} => {
-                kv.content.get_mut(&cvt(key)).unwrap().locked_to_transaction = None
+                kv.content.get_mut(&key).unwrap().locked_to_transaction = None
             },
         }
     }

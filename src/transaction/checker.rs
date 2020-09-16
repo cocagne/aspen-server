@@ -216,10 +216,6 @@ fn check_kv_requirements(
         }
     }
 
-    let cvt = |key: &Key| -> object::Key {
-        object::Key::from_bytes(key.as_bytes())
-    };
-
     let check_lock = |e: &object::KVEntry| -> Result {
         if let Some(locked_tx_id) = e.locked_to_transaction {
             if locked_tx_id != tx_id {
@@ -233,7 +229,7 @@ fn check_kv_requirements(
         for r in key_requirements {
             match r {
                 KeyRequirement::Exists{key} => {
-                    let k = &cvt(key);
+                    let k = key;
 
                     match kv.content.get(&k) {
                         None => return Err(ReqErr::KeyExistenceError),
@@ -241,7 +237,7 @@ fn check_kv_requirements(
                     }
                 },
                 KeyRequirement::MayExist{key} => {
-                    let k = &cvt(key);
+                    let k = key;
 
                     match kv.content.get(&k) {
                         None => {
@@ -253,7 +249,7 @@ fn check_kv_requirements(
                     }
                 },
                 KeyRequirement::DoesNotExist{key} => {
-                    let k = &cvt(key);
+                    let k = key;
 
                     match kv.content.get(&k) {
                         Some(_) => return Err(ReqErr::KeyExistenceError),
@@ -265,7 +261,7 @@ fn check_kv_requirements(
                     }
                 },
                 KeyRequirement::TimestampLessThan{key, timestamp} => {
-                    match kv.content.get(&cvt(key)) {
+                    match kv.content.get(key) {
                         None => return Err(ReqErr::KeyExistenceError),
                         Some(s) => {
                             if s.timestamp > *timestamp {
@@ -276,7 +272,7 @@ fn check_kv_requirements(
                     }
                 },
                 KeyRequirement::TimestampGreaterThan{key, timestamp} => {
-                    match kv.content.get(&cvt(key)) {
+                    match kv.content.get(key) {
                         None => return Err(ReqErr::KeyExistenceError),
                         Some(s) => {
                             if s.timestamp < *timestamp {
@@ -287,7 +283,7 @@ fn check_kv_requirements(
                     }
                 },
                 KeyRequirement::TimestampEquals{key, timestamp} => {
-                    match kv.content.get(&cvt(key)) {
+                    match kv.content.get(key) {
                         None => return Err(ReqErr::KeyExistenceError),
                         Some(s) => {
                             if s.timestamp != *timestamp {
@@ -879,7 +875,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: Some(object::Revision(revid)),
             key_requirements: vec![
-                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k1) }
+                KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
         }];
 
@@ -896,7 +892,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k1) }
+                KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
         }];
 
@@ -910,7 +906,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k1) }
+                KeyRequirement::MayExist{ key: object::Key::from_bytes(&k1) }
             ]
         }];
 
@@ -924,7 +920,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k2) }
+                KeyRequirement::MayExist{ key: object::Key::from_bytes(&k2) }
             ]
         }];
 
@@ -938,7 +934,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: Some(object::Revision(poolid)),
             key_requirements: vec![
-                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k1) }
+                KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
         }];
 
@@ -952,7 +948,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k2) }
+                KeyRequirement::Exists{ key: object::Key::from_bytes(&k2) }
             ]
         }];
 
@@ -966,7 +962,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::DoesNotExist{ key: Key::test_only_from_bytes(&k2) }
+                KeyRequirement::DoesNotExist{ key: object::Key::from_bytes(&k2) }
             ]
         }];
 
@@ -981,7 +977,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampLessThan{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(3)
                 }
             ]
@@ -998,7 +994,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampLessThan{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(1)
                 }
             ]
@@ -1015,7 +1011,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampGreaterThan{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(1)
                 }
             ]
@@ -1032,7 +1028,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampGreaterThan{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(3)
                 }
             ]
@@ -1049,7 +1045,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampEquals{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(2)
                 }
             ]
@@ -1066,7 +1062,7 @@ mod tests {
             required_revision: None,
             key_requirements: vec![
                 KeyRequirement::TimestampEquals{ 
-                    key: Key::test_only_from_bytes(&k1),
+                    key: object::Key::from_bytes(&k1),
                     timestamp: hlc::Timestamp::from(3)
                 }
             ]
@@ -1082,7 +1078,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::Exists{ key: Key::test_only_from_bytes(&k4) }
+                KeyRequirement::Exists{ key: object::Key::from_bytes(&k4) }
             ]
         }];
 
@@ -1096,7 +1092,7 @@ mod tests {
             pointer: p.clone(),
             required_revision: None,
             key_requirements: vec![
-                KeyRequirement::MayExist{ key: Key::test_only_from_bytes(&k3) }
+                KeyRequirement::MayExist{ key: object::Key::from_bytes(&k3) }
             ]
         }];
 

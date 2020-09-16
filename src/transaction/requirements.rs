@@ -29,69 +29,40 @@ impl fmt::Display for TimestampRequirement {
     }
 }
 
-/// Identifies a key within the serialized transaction data buffer. 
-#[derive(Clone, Debug)]
-pub struct Key(ArcDataSlice);
-
-impl Key {
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-
-    pub fn test_only_from_bytes(buff: &[u8]) -> Key {
-        Key(ArcDataSlice::from_bytes(buff))
-    }
-}
-
-impl fmt::Display for Key {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(self.0.as_bytes()))
-    }
-}
-
-impl Hash for Key {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.0.as_bytes());
-    }
-}
-
-impl PartialEq for Key {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_bytes() == other.0.as_bytes()
-    }
-}
-
-impl Eq for Key {}
 
 #[derive(Clone, Debug)]
 pub enum KeyRequirement {
     Exists { 
-        key: Key
+        key: object::Key
     },
     MayExist {
-        key: Key
+        key: object::Key
     },
     DoesNotExist {
-        key: Key
+        key: object::Key
     },
     TimestampLessThan { 
-        key: Key,
+        key: object::Key,
         timestamp: hlc::Timestamp 
     },
     TimestampGreaterThan { 
-        key: Key,
+        key: object::Key,
         timestamp: hlc::Timestamp 
     },
     TimestampEquals { 
-        key: Key,
+        key: object::Key,
         timestamp: hlc::Timestamp 
     },
+    KeyRevision {
+        key: object::Key,
+        revision: object::Revision
+    },
     KeyObjectRevision {
-        key: Key,
+        key: object::Key,
         revision: object::Revision
     },
     WithinRange {
-        key: Key,
+        key: object::Key,
         comparison: KeyComparison
     }
 }
