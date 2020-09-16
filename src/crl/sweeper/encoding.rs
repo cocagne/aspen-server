@@ -599,6 +599,7 @@ mod tests {
             txd_location: None,
             data_locations: None,
             state: TransactionRecoveryState {
+                transaction_id: txid,
                 store_id,
                 serialized_transaction_description: std.into(),
                 object_updates: Vec::new(),
@@ -660,6 +661,7 @@ mod tests {
             txd_location: Some(txd_loc),
             data_locations: Some(vec![u1, u2]),
             state: TransactionRecoveryState {
+                transaction_id: txid,
                 store_id,
                 serialized_transaction_description: std.into(),
                 object_updates: vec![ou1, ou2],

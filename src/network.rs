@@ -10,6 +10,12 @@ pub mod null;
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct ClientId(pub uuid::Uuid);
 
+impl ClientId {
+    pub fn null() -> ClientId {
+        ClientId(uuid::Uuid::nil())
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct RequestId(pub uuid::Uuid);
 

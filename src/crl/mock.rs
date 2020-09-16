@@ -1,7 +1,7 @@
 use std::thread;
 use std::sync;
 
-use crossbeam::crossbeam_channel;
+use crossbeam_channel;
 
 use crate::crl::{RequestCompletionHandler, Crl, Completion};
 use crate::store;

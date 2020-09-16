@@ -460,6 +460,13 @@ impl DataMut {
     pub fn put_uuid(&mut self, uuid: uuid::Uuid) {
         self.put_slice(uuid.as_bytes());
     }
+
+    pub fn put_varint(&mut self, x: usize) {
+        let nbytes = x.required_space();
+        let mut v = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+        x.encode_var(&mut v[..]);
+        self.put_slice(&v[..nbytes]);
+    }
 }
 
 impl DataReader for DataMut {

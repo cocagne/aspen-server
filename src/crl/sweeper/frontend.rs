@@ -1,6 +1,6 @@
 
 use super::*;
-use crossbeam::crossbeam_channel;
+use crossbeam_channel;
 
 
 pub(super) struct Frontend {

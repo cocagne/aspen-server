@@ -12,6 +12,13 @@ pub enum TimestampRequirement {
     GreaterThan(hlc::Timestamp),
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum KeyComparison {
+  ByteArray,
+  Integer,
+  Lexical
+}
+
 impl fmt::Display for TimestampRequirement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -78,6 +85,14 @@ pub enum KeyRequirement {
     TimestampEquals { 
         key: Key,
         timestamp: hlc::Timestamp 
+    },
+    KeyObjectRevision {
+        key: Key,
+        revision: object::Revision
+    },
+    WithinRange {
+        key: Key,
+        comparison: KeyComparison
     }
 }
 

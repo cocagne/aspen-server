@@ -2,8 +2,8 @@
 use std::sync::{Mutex, Arc};
 use std::thread;
 
-use crossbeam::crossbeam_channel;
-use crossbeam::crossbeam_channel::TryRecvError;
+use crossbeam_channel;
+use crossbeam_channel::TryRecvError;
 
 use crate::crl::{RequestCompletionHandler, Crl};
 use crate::crl;
@@ -52,6 +52,7 @@ impl LogState {
                 txd_location: Some(rtx.txd_location),
                 data_locations: Some(rtx.update_locations.iter().map(|ou| ou.1).collect()),
                 state: TransactionRecoveryState {
+                    transaction_id: rtx.id.1.clone(),
                     store_id: rtx.id.0,
                     serialized_transaction_description: rtx.serialized_transaction_description.clone().into(),
                     object_updates: rtx.object_updates.clone(),
@@ -215,6 +216,7 @@ impl LogState {
                             txd_location: None,
                             data_locations: None,
                             state: TransactionRecoveryState {
+                                transaction_id: *transaction_id,
                                 store_id: *store_id,
                                 serialized_transaction_description: serialized_transaction_description.clone(),
                                 object_updates: object_updates.clone(),

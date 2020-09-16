@@ -96,6 +96,14 @@ impl Tx {
         }
     }
 
+    pub fn load_saved_state(&mut self,
+        saved_disposition: transaction::Disposition,
+        saved_state: paxos::PersistentState) {
+            
+        self.disposition = saved_disposition;
+        self.acceptor.load_saved_state(saved_state);
+    }
+
     fn get_save_id(&mut self) -> crl::TxSaveId {
         let save_id = self.next_crl_save;
         self.next_crl_save = self.next_crl_save.next();

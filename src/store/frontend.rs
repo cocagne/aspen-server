@@ -18,6 +18,7 @@ use crate::transaction::messages;
 use crate::transaction::messages::Message;
 use crate::transaction::tx::Tx;
 use crate::object;
+use crate::paxos;
 
 struct NetRead {
     client_id: network::ClientId,
@@ -93,6 +94,61 @@ impl Frontend {
 
     pub fn clear_cache(&mut self) {
         self.object_cache.clear();
+    }
+
+    pub fn load_recovery_state(&mut self,
+        tx_recovery: Vec<crl::TransactionRecoveryState>, 
+        alloc_recovery: Vec<crl::AllocationRecoveryState>) {
+
+        for txr in tx_recovery {
+            let proposal_id = match (txr.paxos_state.promised, txr.paxos_state.accepted) {
+                (None, None) => paxos::ProposalId::initial_proposal_id(0),
+                (Some(pid), None) => pid,
+                (None, Some((pid, _))) => pid,
+                (Some(_), Some((pid, _))) => pid
+            };
+            let mut object_updates: HashMap<object::Id, ArcDataSlice> = HashMap::new();
+            for ou in txr.object_updates {
+                object_updates.insert(ou.object_id, ou.data);
+            }
+            let p = messages::Prepare { 
+                to: txr.store_id,
+                from: txr.store_id,
+                proposal_id : proposal_id,
+                txd: transaction::TransactionDescription::deserialize(txr.serialized_transaction_description),
+                object_updates: object_updates,
+                pre_tx_rebuilds: Vec::new()
+            };
+            let mut object_locaters: HashMap<object::Id, store::Pointer> = p.txd.hosted_objects(txr.store_id);
+
+            let t = Tx::new(txr.store_id, p, &object_locaters, &self.backend, &self.crl, &self.net);
+            t.load_saved_state(txr.tx_disposition, txr.paxos_state);
+            self.transactions.insert(txr.transaction_id, t); 
+        }
+
+        for ar in alloc_recovery {
+            let ar = client_messages::AllocateResponse {
+                to: network::ClientId::null(),
+                from: self.store_id,
+                allocation_transaction_id: ar.allocation_transaction_id,
+                object_id: ar.id,
+                result: Ok(ar.store_pointer)
+            };
+            match self.pending_allocations.get(&ar.allocation_transaction_id) {
+                None => {
+                    self.pending_allocations.insert(ar.allocation_transaction_id, PendingAllocation::Single(ar));
+                },
+                Some(pa) => {
+                    match pa {
+                        PendingAllocation::Single(p) => {
+                            let v = vec![p.clone(), ar];
+                            self.pending_allocations.insert(ar.allocation_transaction_id, PendingAllocation::Multi(v));
+                        },
+                        PendingAllocation::Multi(v) => v.push(ar)
+                    }
+                }
+            }
+        }
     }
 
     pub fn backend_complete(&mut self, completion: Completion) {

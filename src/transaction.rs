@@ -107,6 +107,10 @@ pub struct TransactionDescription {
 
 impl TransactionDescription {
 
+    pub fn deserialize(encoded: ArcDataSlice) -> TransactionDescription {
+
+    }
+
     pub fn designated_leader_store_id(&self) -> store::Id {
         store::Id {
             pool_uuid: self.primary_object.pool_id.0,

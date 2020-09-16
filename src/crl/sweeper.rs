@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync;
 
-use crossbeam::crossbeam_channel;
+use crossbeam_channel;
 
 use crate::{ArcData, ArcDataSlice, Data, DataMut, DataReader};
 use crate::hlc;

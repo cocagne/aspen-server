@@ -17,6 +17,7 @@ pub mod pool;
 pub mod store;
 pub mod transaction;
 pub mod util;
+pub mod encoding;
 
 pub use data::{ArcData, ArcDataSlice, RawData, Data, DataMut, DataReader, SliceReader};
 

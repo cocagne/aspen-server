@@ -121,7 +121,7 @@ impl TS {
             data: ArcDataSlice::from_vec(content),
             timestamp: hlc::Timestamp::from(2),
             allocation_transaction_id: txid,
-            revision_guard: object::AllocationRevisionGuard {
+            revision_guard: object::AllocationRevisionGuard::ObjectRevisionGuard {
                 pointer: self.ptr(&self.oid2, &store::Pointer::None {
                     pool_index: 1
                 }),

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crossbeam::channel;
+use crossbeam_channel;
 
 use crate::crl;
 use crate::network;
@@ -37,16 +37,16 @@ pub enum Message {
     },
     LoadStore {
         store_id: store::Id,
-        load_fn: Box<dyn Fn() -> Result<Box<dyn backend::Backend>, String>>,
+        load_fn: Box<dyn Fn() -> Result<Rc<dyn backend::Backend>, String>>,
         handler: Box<dyn StoreLoadCompletionHandler>
     }
 
 }
 
 pub struct StoreManager {
-    receiver: channel::Receiver<Message>,
+    receiver: crossbeam_channel::Receiver<Message>,
     stores: HashMap<store::Id, frontend::Frontend>,
-    _crl: Rc<dyn crl::Crl>,
+    crl: Rc<dyn crl::Crl>,
     net: Rc<dyn network::Messenger>
 }
 
@@ -116,10 +116,26 @@ impl StoreManager {
 
     fn load_store(
         &mut self,
-        _store_id: store::Id, 
-        _load_fn: Box<dyn Fn() -> Result<Box<dyn backend::Backend>, String>>,
-        _handler: Box<dyn StoreLoadCompletionHandler>) {
+        store_id: store::Id, 
+        load_fn: Box<dyn Fn() -> Result<Rc<dyn backend::Backend>, String>>,
+        handler: Box<dyn StoreLoadCompletionHandler>) {
 
+        let be = match load_fn() {
+            Ok(b) => b,
+            Err(err) => {
+                handler.complete(StoreLoadResult::Failure(store_id, err));
+                return;
+            }
+        };
+
+        let backend = Rc::new(be);
+        let object_cache = store::UnboundedObjectCache::new();
+        let mut frontend = frontend::Frontend::new(store_id, &backend, object_cache, &self.crl, &self.net);
+
+        let (tx_recovery, alloc_recovery) = self.crl.get_full_recovery_state(store_id);
+
+        frontend.load_recovery_state(tx_recovery, alloc_recovery);
         
+        self.stores.insert(store_id, frontend);
     }
 }

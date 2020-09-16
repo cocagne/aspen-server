@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync;
+use std::collections::HashMap;
+use lru_cache::LruCache;
 
 use crate::object;
 use crate::transaction;
@@ -97,6 +99,31 @@ pub enum Pointer {
 }
 
 impl Pointer {
+    pub fn new(pool_index: u8, content: Option<&[u8]>) -> Pointer {
+        match content {
+            Some(c) => {
+                if c.len() < 22 {
+                    let s = Pointer::Short {
+                        pool_index,
+                        nbytes: c.len() as u8,
+                        content: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+                    };
+                    if let Pointer::Short {content, ..} = s {
+                        content.copy_from_slice(c);
+                    }
+                    s
+                } else {
+                    let mut v = Vec::with_capacity(c.len());
+                    v.extend_from_slice(c);
+                    Pointer::Long {
+                        pool_index,
+                        content: v
+                    }
+                }
+            }
+            None => Pointer::None { pool_index }
+        }
+    }
     pub fn encoded_len(&self) -> usize {
         self.content_len() + 1
     }
@@ -227,6 +254,69 @@ pub trait ObjectCache {
 
     /// Used only for aborted allocations
     fn remove(&mut self, object_id: &object::Id);
+}
+
+pub struct UnboundedObjectCache {
+    cache: HashMap<object::Id, Rc<RefCell<State>>>
+}
+
+impl UnboundedObjectCache {
+    fn new() -> Box<dyn ObjectCache> { 
+        Box::new( UnboundedObjectCache { cache: HashMap::new() } )
+    }
+}
+
+impl ObjectCache for UnboundedObjectCache {
+
+    fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
+        self.cache.get(object_id)
+    }
+
+    fn insert(&mut self, state: Rc<RefCell<State>>) -> Option<Rc<RefCell<State>>> {
+        self.cache.insert(state.borrow().id, state.clone())
+    }
+
+    fn remove(&mut self, object_id: &object::Id) {
+        self.cache.remove(object_id);
+    }
+}
+
+pub struct LruObjectCache {
+    cache: LruCache<object::Id, Rc<RefCell<State>>>
+}
+
+impl LruObjectCache {
+    fn new(size: usize) -> Box<dyn ObjectCache> {
+        Box::new(LruObjectCache{ 
+            cache: LruCache::new(size)
+        })
+    }
+}
+
+impl ObjectCache for LruObjectCache {
+
+    fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
+        match self.cache.get_mut(object_id) {
+            None => None,
+            Some(r) => Some(&r)
+        }
+    }
+
+    fn insert(&mut self, state: Rc<RefCell<State>>) -> Option<Rc<RefCell<State>>> {
+        self.cache.insert(state.borrow().id, state.clone())
+    }
+
+    fn remove(&mut self, object_id: &object::Id) {
+        self.cache.remove(object_id);
+    }
 }
 
 #[derive(Debug, Clone)]

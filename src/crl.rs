@@ -113,6 +113,7 @@ pub trait Backend {
 /// Represents the persistent state needed to recover a transaction after a crash
 #[derive(Clone, Eq, PartialEq)]
 pub struct TransactionRecoveryState {
+    pub transaction_id: transaction::Id,
     pub store_id: store::Id,
     pub serialized_transaction_description: ArcDataSlice,
     pub object_updates: Vec<transaction::ObjectUpdate>,

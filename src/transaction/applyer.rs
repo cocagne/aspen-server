@@ -202,6 +202,7 @@ mod tests {
             pool_id: pool::Id(poolid),
             size: None,
             ida: IDA::Replication{ width: 3, write_threshold: 2},
+            object_type: object::ObjectType::Data,
             store_pointers: vec![sp0, sp1]
         };
 
@@ -274,6 +275,7 @@ mod tests {
             pool_id: pool::Id(poolid),
             size: None,
             ida: IDA::Replication{ width: 3, write_threshold: 2},
+            object_type: object::ObjectType::Data,
             store_pointers: vec![sp0, sp1]
         };
 

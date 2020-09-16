@@ -107,19 +107,33 @@ pub struct Metadata {
     pub timestamp: crate::hlc::Timestamp,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ObjectType {
+    Data,
+    KeyValue
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pointer {
     pub id: Id,
     pub pool_id: pool::Id,
     pub size: Option<u32>,
     pub ida: ida::IDA,
+    pub object_type: ObjectType,
     pub store_pointers: Vec<store::Pointer>
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AllocationRevisionGuard {
-    pub pointer: Pointer,
-    pub required_revision: Revision
+pub enum AllocationRevisionGuard {
+    ObjectRevisionGuard {
+        pointer: Pointer,
+        required_revision: Revision
+    },
+    KeyRevisionGuard {
+        pointer: Pointer,
+        key: Key,
+        key_revision: Revision
+    }
 }
 
 /// Identifies a key within a data buffer. Used to decouple references when

@@ -17,6 +17,10 @@ impl Acceptor {
         }
     }
 
+    pub fn load_saved_state(&mut self, saved_state: PersistentState) {
+        self.state = saved_state;
+    }
+
     pub fn persistent_state(&self) -> PersistentState {
         self.state
     }
