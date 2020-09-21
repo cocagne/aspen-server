@@ -1,9 +1,7 @@
 use std::fmt;
 
-use crate::data::ArcDataSlice;
 use crate::hlc;
 use crate::object;
-use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Copy, Debug)]
 pub enum TimestampRequirement {
@@ -17,6 +15,16 @@ pub enum KeyComparison {
   ByteArray,
   Integer,
   Lexical
+}
+
+impl fmt::Display for KeyComparison {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeyComparison::ByteArray => write!(f, "KeyComparison(ByteArray)"),
+            KeyComparison::Integer => write!(f, "KeyComparison(Integer)"),
+            KeyComparison::Lexical => write!(f, "KeyComparison(Lexical)"),
+        }
+    }
 }
 
 impl fmt::Display for TimestampRequirement {
@@ -76,7 +84,10 @@ impl fmt::Display for KeyRequirement{
             KeyRequirement::DoesNotExist{key} => write!(f, "DoesNotEqual({})", key),
             KeyRequirement::TimestampLessThan{key, timestamp} => write!(f, "TimestampLessThan({},{})", key, timestamp),
             KeyRequirement::TimestampGreaterThan{key, timestamp} => write!(f, "TimestampGreaterThan({},{})", key, timestamp),
-            KeyRequirement::TimestampEquals{key, timestamp} => write!(f, "TimestampEquals({},{})", key, timestamp)
+            KeyRequirement::TimestampEquals{key, timestamp} => write!(f, "TimestampEquals({},{})", key, timestamp),
+            KeyRequirement::KeyRevision{key, revision} => write!(f, "KeyRevision({},{})", key, revision),
+            KeyRequirement::KeyObjectRevision{key, revision} => write!(f, "KeyObjectRevision({},{})", key, revision),
+            KeyRequirement::WithinRange{key, comparison} => write!(f, "WithinRange({},{})", key, comparison),
         }
     }
 }
@@ -111,6 +122,7 @@ pub enum TransactionRequirement {
     KeyValueUpdate {
         pointer: object::Pointer,
         required_revision: Option<object::Revision>,
+        full_content_lock: std::collections::HashSet<object::Key>,
         key_requirements: Vec<KeyRequirement>
     }
 }

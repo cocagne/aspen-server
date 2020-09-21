@@ -344,3 +344,65 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
     };
     protocol::KVReq::create(builder, &args)
 }
+
+pub fn decode_data_update(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+    let required_revision = decode_object_revision(o.required_revision().unwrap());
+    let operation = decode_data_update_operation(o.operation());
+    requirements::TransactionRequirement::DataUpdate {
+        pointer,
+        required_revision,
+        operation
+    }
+}
+
+pub fn decode_refcount_udpate(o: protocol::RefcountUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+    let required_refcount = decode_object_refcount(o.required_refcount().unwrap());
+    let new_refcount = decode_object_refcount(o.new_refcount().unwrap());
+    requirements::TransactionRequirement::RefcountUpdate {
+        pointer,
+        required_refcount,
+        new_refcount
+    }
+}
+
+pub fn decode_version_bump(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+    let required_revision = decode_object_revision(o.required_revision().unwrap());
+    
+    requirements::TransactionRequirement::VersionBump {
+        pointer,
+        required_revision,
+    }
+}
+
+pub fn decode_revision_lock(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+    let required_revision = decode_object_revision(o.required_revision().unwrap());
+    
+    requirements::TransactionRequirement::RevisionLock {
+        pointer,
+        required_revision,
+    }
+}
+
+pub fn decode_serialized_finalization_action(o: protocol::SerializedFinalizationAction) -> transaction::SerializedFinalizationAction {
+    let tid = decode_uuid(o.type_uuid().unwrap());
+    let slice = o.data().unwrap();
+    let v:Vec<u8> = Vec::with_capacity(slice.len());
+    v.extend_from_slice(std::mem::transmute::<&[i8],&[u8]>(slice));
+
+    transaction::SerializedFinalizationAction {
+        type_uuid: tid,
+        data: v
+    }
+}
+pub fn encode_serialized_finalization_action<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+    o: &transaction::SerializedFinalizationAction) -> flatbuffers::WIPOffset<protocol::SerializedFinalizationAction<'bldr>> {
+
+    protocol::SerializedFinalizationAction::create(builder, &protocol::SerializedFinalizationActionArgs {
+        type_uuid: Some(&encode_uuid(o.type_uuid)),
+        data: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(&o.data[..])))
+    })
+}

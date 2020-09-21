@@ -90,7 +90,10 @@ pub struct ObjectUpdate {
 }
 
 #[derive(Debug, Clone)]
-pub struct SerializedFinalizationAction(pub ArcDataSlice);
+pub struct SerializedFinalizationAction{
+    pub type_uuid: uuid::Uuid,
+    pub data: Vec<u8>
+};
 
 pub struct TransactionDescription {
     pub id: Id,

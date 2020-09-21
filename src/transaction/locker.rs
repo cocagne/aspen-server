@@ -19,7 +19,7 @@ pub fn lock_requirements(
             TransactionRequirement::VersionBump{pointer, ..} => Some(pointer),
             TransactionRequirement::RefcountUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::DataUpdate{pointer, ..} => Some(pointer),
-            TransactionRequirement::KeyValueUpdate{pointer, required_revision, key_requirements} => {
+            TransactionRequirement::KeyValueUpdate{pointer, required_revision, full_content_lock, key_requirements} => {
                 lock_kv_requirements(tx_id, objects.get_mut(&pointer.id).unwrap(), &key_requirements);
                 required_revision.map( |_| pointer)
             },
@@ -79,7 +79,7 @@ pub fn unlock_requirements(
             TransactionRequirement::VersionBump{pointer, ..} => Some(pointer),
             TransactionRequirement::RefcountUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::DataUpdate{pointer, ..} => Some(pointer),
-            TransactionRequirement::KeyValueUpdate{pointer, required_revision, key_requirements} => {
+            TransactionRequirement::KeyValueUpdate{pointer, required_revision, full_content_lock, key_requirements} => {
                 unlock_kv_requirements(objects.get_mut(&pointer.id).unwrap(), &key_requirements);
                 required_revision.map( |_| pointer)
             },
