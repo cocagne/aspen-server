@@ -126,7 +126,7 @@ pub fn encode_object_type(o: object::ObjectType) -> protocol::ObjectType {
     }
 }
 
-pub fn decode_object_pointer(o: protocol::ObjectPointer) -> object::Pointer {
+pub fn decode_object_pointer(o: &protocol::ObjectPointer) -> object::Pointer {
     let oid = decode_uuid(o.uuid().unwrap());
     let pool_id = decode_uuid(o.pool_uuid().unwrap());
     let size = if o.size_() == 0 { None } else {Some(o.size_() as u32)};
@@ -235,7 +235,7 @@ pub fn encode_data_update_operation(o: object::DataUpdateOperation) -> protocol:
     }
 }
 
-pub fn decode_key_requirement(o: protocol::KVReq) -> requirements::KeyRequirement {
+pub fn decode_key_requirement(o: &protocol::KVReq) -> requirements::KeyRequirement {
     let key = object::Key::from_bytes(std::mem::transmute::<&[i8], &[u8]>(o.key().unwrap()));
     let timestamp = hlc::Timestamp::from(o.timestamp() as u64);
     match o.requirement() {
@@ -345,8 +345,10 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
     protocol::KVReq::create(builder, &args)
 }
 
-pub fn decode_data_update(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
-    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+
+
+pub fn decode_data_update(o: &protocol::DataUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(&o.object_pointer().unwrap());
     let required_revision = decode_object_revision(o.required_revision().unwrap());
     let operation = decode_data_update_operation(o.operation());
     requirements::TransactionRequirement::DataUpdate {
@@ -356,8 +358,8 @@ pub fn decode_data_update(o: protocol::DataUpdate) -> requirements::TransactionR
     }
 }
 
-pub fn decode_refcount_udpate(o: protocol::RefcountUpdate) -> requirements::TransactionRequirement {
-    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+pub fn decode_refcount_udpate(o: &protocol::RefcountUpdate) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(&o.object_pointer().unwrap());
     let required_refcount = decode_object_refcount(o.required_refcount().unwrap());
     let new_refcount = decode_object_refcount(o.new_refcount().unwrap());
     requirements::TransactionRequirement::RefcountUpdate {
@@ -367,8 +369,8 @@ pub fn decode_refcount_udpate(o: protocol::RefcountUpdate) -> requirements::Tran
     }
 }
 
-pub fn decode_version_bump(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
-    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+pub fn decode_version_bump(o: &protocol::VersionBump) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(&o.object_pointer().unwrap());
     let required_revision = decode_object_revision(o.required_revision().unwrap());
     
     requirements::TransactionRequirement::VersionBump {
@@ -377,8 +379,8 @@ pub fn decode_version_bump(o: protocol::DataUpdate) -> requirements::Transaction
     }
 }
 
-pub fn decode_revision_lock(o: protocol::DataUpdate) -> requirements::TransactionRequirement {
-    let pointer = decode_object_pointer(o.object_pointer().unwrap());
+pub fn decode_revision_lock(o: &protocol::RevisionLock) -> requirements::TransactionRequirement {
+    let pointer = decode_object_pointer(&o.object_pointer().unwrap());
     let required_revision = decode_object_revision(o.required_revision().unwrap());
     
     requirements::TransactionRequirement::RevisionLock {
@@ -387,7 +389,7 @@ pub fn decode_revision_lock(o: protocol::DataUpdate) -> requirements::Transactio
     }
 }
 
-pub fn decode_serialized_finalization_action(o: protocol::SerializedFinalizationAction) -> transaction::SerializedFinalizationAction {
+pub fn decode_serialized_finalization_action(o: &protocol::SerializedFinalizationAction) -> transaction::SerializedFinalizationAction {
     let tid = decode_uuid(o.type_uuid().unwrap());
     let slice = o.data().unwrap();
     let v:Vec<u8> = Vec::with_capacity(slice.len());
@@ -405,4 +407,128 @@ pub fn encode_serialized_finalization_action<'bldr>(builder: &'bldr mut flatbuff
         type_uuid: Some(&encode_uuid(o.type_uuid)),
         data: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(&o.data[..])))
     })
+}
+
+pub fn decode_timestamp_requirement(o: protocol::LocalTimeRequirementEnum, timestamp:i64) -> requirements::TimestampRequirement {
+    match o {
+        protocol::LocalTimeRequirementEnum::GreaterThan => requirements::TimestampRequirement::GreaterThan(hlc::Timestamp::from(timestamp as u64)),
+        protocol::LocalTimeRequirementEnum::LessThan => requirements::TimestampRequirement::LessThan(hlc::Timestamp::from(timestamp as u64))
+    }
+}
+pub fn encode_time_requirement(o: requirements::TimestampRequirement) -> protocol::LocalTimeRequirementEnum {
+    match o {
+        requirements::TimestampRequirement::Equals(_) => protocol::LocalTimeRequirementEnum::GreaterThan,
+        requirements::TimestampRequirement::GreaterThan(_) => protocol::LocalTimeRequirementEnum::GreaterThan,
+        requirements::TimestampRequirement::LessThan(_) => protocol::LocalTimeRequirementEnum::LessThan,
+    }
+}
+
+pub fn decode_local_time_requirement(o: &protocol::LocalTimeRequirement) -> requirements::TransactionRequirement {
+    let tr = decode_timestamp_requirement(o.requirement(), o.timestamp());
+    requirements::TransactionRequirement::LocalTime {
+        requirement: tr
+    }
+}
+pub fn encode_local_time_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+o: &requirements::TimestampRequirement) -> flatbuffers::WIPOffset<protocol::LocalTimeRequirement<'bldr>> {
+    let ts = match o {
+        requirements::TimestampRequirement::Equals(ts) => ts.to_u64() as i64,
+        requirements::TimestampRequirement::GreaterThan(ts) => ts.to_u64() as i64,
+        requirements::TimestampRequirement::LessThan(ts) => ts.to_u64() as i64
+    };
+    protocol::LocalTimeRequirement::create(builder, &protocol::LocalTimeRequirementArgs {
+        timestamp: ts,
+        requirement: encode_time_requirement(*o)
+    })
+}
+
+pub fn decode_store_id(o: &protocol::StoreId) -> store::Id {
+    let pool = decode_uuid(o.storage_pool_uuid().unwrap());
+    let index = o.storage_pool_index();
+    
+    store::Id {
+        pool_uuid: pool,
+        pool_index: index as u8
+    }
+}
+pub fn encode_store_id<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+    o: &store::Id) -> flatbuffers::WIPOffset<protocol::StoreId<'bldr>> {
+
+    protocol::StoreId::create(builder, &protocol::StoreIdArgs {
+        storage_pool_uuid: Some(&encode_uuid(o.pool_uuid)),
+        storage_pool_index: o.pool_index as i8
+    })
+}
+
+pub fn decode_transaction_requirement(o: &protocol::TransactionRequirement) -> transaction::TransactionRequirement {
+    if let Some(r) = o.data_update() {
+        return decode_data_update(&r)
+    };
+    if let Some(r) = o.refcount_update() {
+        return decode_refcount_udpate(&r)
+    };
+    if let Some(r) = o.version_bump() {
+        return decode_version_bump(&r)
+    };
+    if let Some(r) = o.revision_lock() {
+        return decode_revision_lock(&r)
+    };
+    if let Some(r) = o.kv_update() {
+        let object_pointer = decode_object_pointer(&r.object_pointer().unwrap());
+        let required_revision = decode_object_revision(&r.required_revision().unwrap());
+        let full_content_lock: Vec<requirements::KeyRevision> = Vec::new();
+        if let Some(v) = r.content_lock() {
+            for kr in v {
+                full_content_lock.push(requirements::KeyRevision {
+                    key: object::Key::from_bytes(std::mem::transmute::<&[i8], &[u8]>(kr.key().unwrap())),
+                    revision: decode_object_revision(&kr.revision().unwrap())
+                });
+            }
+        };
+        let kv_reqs: Vec<requirements::KeyRequirement> = Vec::new();
+        if let Some(v) = r.requirements() {
+            for r in v {
+                kv_reqs.push(decode_key_requirement(&r));
+            }
+        };
+    };
+
+    return decode_local_time_requirement(&o.localtime().unwrap())
+}
+pub fn encode_transaction_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+    o: &requirements::TimestampRequirement) -> flatbuffers::WIPOffset<protocol::TransactionRequirement<'bldr>> {
+
+    ()
+}
+
+pub fn decode_transaction_description(o: &protocol::TransactionDescription) -> transaction::TransactionDescription {
+    let txid = transaction::Id(decode_uuid(o.transaction_uuid().unwrap()));
+    let start_ts = hlc::Timestamp::from(o.start_timestamp() as u64);
+    let primary_object = decode_object_pointer(&o.primary_object().unwrap());
+    let designated_leader = o.designated_leader_uid();
+    let originating_client = decode_uuid(o.originating_client().unwrap());
+
+    let mut notify_on_resolution:Vec<store::Id> = Vec::new();
+    if let Some(v) = o.notify_on_resolution() {
+        for p in v {
+            notify_on_resolution.push(decode_store_id(&p));
+        }
+    };
+
+    let mut finalization_actions:Vec<transaction::SerializedFinalizationAction> = Vec::new();
+    if let Some(v) = o.finalization_actions() {
+        for p in v {
+            finalization_actions.push(decode_serialized_finalization_action(&p));
+        }
+    };
+
+    let notes = String::from_utf8_lossy(std::mem::transmute::<&[i8],&[u8]>(o.notes().unwrap()));
+
+    let transaction_requirements: Vec<requirements::TransactionRequirement> = Vec::new();
+    if let Some(v) = o.requirements() {
+        for p in v {
+
+        }
+    }
+    ()
 }

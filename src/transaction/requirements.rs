@@ -17,6 +17,12 @@ pub enum KeyComparison {
   Lexical
 }
 
+#[derive(Clone, Debug)]
+pub struct KeyRevision {
+  pub key: object::Key,
+  pub revision: object::Revision,
+}
+
 impl fmt::Display for KeyComparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -122,7 +128,7 @@ pub enum TransactionRequirement {
     KeyValueUpdate {
         pointer: object::Pointer,
         required_revision: Option<object::Revision>,
-        full_content_lock: std::collections::HashSet<object::Key>,
+        full_content_lock: Vec<KeyRevision>,
         key_requirements: Vec<KeyRequirement>
     }
 }

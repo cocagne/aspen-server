@@ -1,4 +1,4 @@
-* Add tx handling support for KeyWithinRange and KeyObjectRevision
+* Add tx handling support for KeyWithinRange and KeyObjectRevision, full_content_lock
 
 ***** FIX - Once serialization is done replace revision guard in crl.save_allocation_state call
 

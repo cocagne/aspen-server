@@ -206,7 +206,7 @@ fn check_kv_requirements(
     tx_id: transaction::Id,
     state: &TxStateRef,
     required_revision: &Option<object::Revision>,
-    full_content_lock: &HashSet<object::Key>,
+    full_content_lock: &Vec<KeyRevision>,
     key_requirements: &Vec<KeyRequirement>) -> Result {
 
     // TODO: full_content_lock, WithinRange, KeyRevision, KeyObjectRevision
@@ -877,7 +877,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: Some(object::Revision(revid)),
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
@@ -895,7 +895,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
@@ -910,7 +910,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::MayExist{ key: object::Key::from_bytes(&k1) }
             ]
@@ -925,7 +925,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::MayExist{ key: object::Key::from_bytes(&k2) }
             ]
@@ -940,7 +940,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: Some(object::Revision(poolid)),
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::Exists{ key: object::Key::from_bytes(&k1) }
             ]
@@ -955,7 +955,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::Exists{ key: object::Key::from_bytes(&k2) }
             ]
@@ -970,7 +970,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::DoesNotExist{ key: object::Key::from_bytes(&k2) }
             ]
@@ -985,7 +985,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampLessThan{ 
                     key: object::Key::from_bytes(&k1),
@@ -1003,7 +1003,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampLessThan{ 
                     key: object::Key::from_bytes(&k1),
@@ -1021,7 +1021,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampGreaterThan{ 
                     key: object::Key::from_bytes(&k1),
@@ -1039,7 +1039,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampGreaterThan{ 
                     key: object::Key::from_bytes(&k1),
@@ -1057,7 +1057,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampEquals{ 
                     key: object::Key::from_bytes(&k1),
@@ -1075,7 +1075,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::TimestampEquals{ 
                     key: object::Key::from_bytes(&k1),
@@ -1093,7 +1093,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::Exists{ key: object::Key::from_bytes(&k4) }
             ]
@@ -1108,7 +1108,7 @@ mod tests {
         let reqs = vec![TransactionRequirement::KeyValueUpdate{
             pointer: p.clone(),
             required_revision: None,
-            full_content_lock: HashSet::new(),
+            full_content_lock: Vec::new(),
             key_requirements: vec![
                 KeyRequirement::MayExist{ key: object::Key::from_bytes(&k3) }
             ]
