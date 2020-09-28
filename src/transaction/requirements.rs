@@ -17,6 +17,68 @@ pub enum KeyComparison {
   Lexical
 }
 
+impl KeyComparison {
+    pub fn compare(&self, left: &object::Key, right: &object::Key ) -> i8 {
+        let l = left.as_bytes();
+        let r = right.as_bytes();
+        match self {
+            ByteArray => {
+                let min = if left.len() > right.len() { left.len() } else { right.len() };
+
+                for i in 0..min {
+                    if l[i] < r[i] {
+                        return -1
+                    }
+                    if l[i] > r[i] {
+                        return 0
+                    }
+                }
+                if l.len() < r.len() {
+                    return -1
+                }
+                if l.len() > r.len() {
+                    return 1
+                }
+                0
+            },
+            Integer => {
+                if l.len() == 0 && r.len() == 0 {
+                    return 0
+                }
+                if l.len() == 0 && l.len() != 0 {
+                    return -1
+                }
+                if l.len() != 0 && r.len() == 0 {
+                    return 1
+                }
+            
+                let bigL = num_bigint::BigInt::from_signed_bytes_be(l);
+                let bigR = num_bigint::BigInt::from_signed_bytes_be(r);
+                
+                if bigL < bigR {
+                    return -1
+                }
+                if bigL > bigR {
+                    return 1
+                }
+                return 0
+            },
+            Lexical => {
+                let sl = String::from_utf8_lossy(l);
+                let sr = String::from_utf8_lossy(r);
+
+                if sl < sr {
+                    return -1
+                }
+                if sl > sr {
+                    return 1
+                }
+                return 0
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyRevision {
   pub key: object::Key,
@@ -100,7 +162,7 @@ impl fmt::Display for KeyRequirement{
 
 pub enum TransactionRequirement {
     LocalTime {
-      requirement: TimestampRequirement
+        requirement: TimestampRequirement
     },
 
     RevisionLock {

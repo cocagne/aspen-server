@@ -21,7 +21,8 @@ pub enum ReqErr {
     RevisionMismatch,
     RefcountMismatch,
     KeyTimestampError,
-    KeyExistenceError
+    KeyExistenceError,
+    OutOfRange
 }
 
 pub fn check_requirements(
@@ -213,6 +214,9 @@ fn check_kv_requirements(
     
     let mut s = state.borrow_mut();
 
+    let object_revision = s.metadata.revision;
+    let object_locked_to_transaction = s.locked_to_transaction;
+
     if let Some(required_revision) = required_revision {
         if s.metadata.revision != * required_revision {
             return Err(ReqErr::RevisionMismatch)
@@ -294,6 +298,42 @@ fn check_kv_requirements(
                             }
                             check_lock(s)?
                         }
+                    }
+                },
+                KeyRequirement::KeyRevision{key, revision} => {
+                    match kv.content.get(key) {
+                        None => return Err(ReqErr::KeyExistenceError),
+                        Some(s) => {
+                            if s.revision != *revision {
+                                return Err(ReqErr::RevisionMismatch)
+                            }
+                            check_lock(s)?
+                        }
+                    }
+                },
+                KeyRequirement::KeyObjectRevision{revision, ..} => {
+                    if object_revision != *revision {
+                        return Err(ReqErr::RevisionMismatch)
+                    }
+                    if let Some(locked_tx_id) = object_locked_to_transaction {
+                        if locked_tx_id != tx_id {
+                            return Err(ReqErr::TransactionCollision)
+                        }
+                    }  
+                },
+                KeyRequirement::WithinRange{key, comparison} => {
+                    let left = if let Some(min) = &kv.min {
+                        comparison.compare(&key, &min) >= 0
+                    } else {
+                        true
+                    };
+                    let right = if let Some(max) = &kv.max {
+                        comparison.compare(&key, &max) <= 0
+                    } else {
+                        true
+                    };
+                    if !(left && right) {
+                        return Err(ReqErr::OutOfRange)
                     }
                 },
             }

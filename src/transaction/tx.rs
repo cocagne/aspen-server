@@ -298,7 +298,7 @@ impl Tx {
         self.crl.save_transaction_state(
             self.store_id, 
             self.txid, 
-            self.txd.serialized_transaction_description.clone(),
+            self.txd.serialized_transaction_description().clone(),
             object_updates,
             self.disposition,
             self.acceptor.persistent_state(),

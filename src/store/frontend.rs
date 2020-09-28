@@ -115,13 +115,13 @@ impl Frontend {
                 to: txr.store_id,
                 from: txr.store_id,
                 proposal_id : proposal_id,
-                txd: transaction::TransactionDescription::deserialize(txr.serialized_transaction_description),
+                txd: transaction::TransactionDescription::deserialize(&txr.serialized_transaction_description),
                 object_updates: object_updates,
                 pre_tx_rebuilds: Vec::new()
             };
             let mut object_locaters: HashMap<object::Id, store::Pointer> = p.txd.hosted_objects(txr.store_id);
 
-            let t = Tx::new(txr.store_id, p, &object_locaters, &self.backend, &self.crl, &self.net);
+            let mut t = Tx::new(txr.store_id, p, &object_locaters, &self.backend, &self.crl, &self.net);
             t.load_saved_state(txr.tx_disposition, txr.paxos_state);
             self.transactions.insert(txr.transaction_id, t); 
         }
@@ -134,15 +134,16 @@ impl Frontend {
                 object_id: ar.id,
                 result: Ok(ar.store_pointer)
             };
-            match self.pending_allocations.get(&ar.allocation_transaction_id) {
+            match self.pending_allocations.get_mut(&ar.allocation_transaction_id) {
                 None => {
                     self.pending_allocations.insert(ar.allocation_transaction_id, PendingAllocation::Single(ar));
                 },
                 Some(pa) => {
                     match pa {
                         PendingAllocation::Single(p) => {
+                            let alloc_tx_id = ar.allocation_transaction_id;
                             let v = vec![p.clone(), ar];
-                            self.pending_allocations.insert(ar.allocation_transaction_id, PendingAllocation::Multi(v));
+                            self.pending_allocations.insert(alloc_tx_id, PendingAllocation::Multi(v));
                         },
                         PendingAllocation::Multi(v) => v.push(ar)
                     }

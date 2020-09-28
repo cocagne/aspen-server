@@ -28,6 +28,12 @@ impl fmt::Display for Id {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct Revision(pub uuid::Uuid);
 
+impl Revision {
+    pub fn nil() -> Revision {
+        Revision(uuid::Uuid::nil())
+    }
+}
+
 impl fmt::Display for Revision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Revision({})", self.0)

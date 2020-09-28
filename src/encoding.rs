@@ -10,12 +10,24 @@ use crate::transaction;
 use crate::transaction::requirements;
 use uuid;
 use crate::data;
-use crate::data::DataReader;
+use crate::data::{DataReader, ArcDataSlice};
 use crate::ida;
 use crate::object;
 use crate::store;
 use crate::pool;
 use crate::hlc;
+use crate::network;
+
+fn u8toi8(a: &[u8]) -> &[i8] {
+    unsafe {
+        std::mem::transmute::<&[u8], &[i8]>(a)
+    }
+}
+fn i8tou8(a: &[i8]) -> &[u8] {
+    unsafe {
+        std::mem::transmute::<&[i8], &[u8]>(a)
+    }
+}
 
 pub fn decode_uuid(o: &protocol::UUID) -> uuid::Uuid {
     let mut d = data::DataMut::with_capacity(16);
@@ -24,7 +36,7 @@ pub fn decode_uuid(o: &protocol::UUID) -> uuid::Uuid {
     uuid::Uuid::from_slice(d.finalize().as_bytes()).unwrap()
 }
 pub fn encode_uuid(o: uuid::Uuid) -> protocol::UUID {
-    let d = data::RawData::new(o.as_bytes());
+    let mut d = data::RawData::new(o.as_bytes());
     let msb = d.get_u64_be();
     let lsb = d.get_u64_be();
     protocol::UUID::new(msb as i64, lsb as i64)
@@ -67,7 +79,7 @@ pub fn decode_object_revision(o: &protocol::ObjectRevision) -> object::Revision 
     object::Revision(u)
 }
 pub fn encode_object_revision(o: &object::Revision) -> protocol::ObjectRevision {
-    let d = data::RawData::new(o.0.as_bytes());
+    let mut d = data::RawData::new(o.0.as_bytes());
     let msb = d.get_u64_be();
     let lsb = d.get_u64_be();
     protocol::ObjectRevision::new(msb as i64, lsb as i64)
@@ -84,10 +96,10 @@ pub fn encode_object_refcount(o: &object::Refcount) -> protocol::ObjectRefcount 
 }
 
 pub fn decode_store_pointer(o: &protocol::StorePointer) -> store::Pointer {
+    let mut v = Vec::new();
     let x = match o.data() {
         None => None,
         Some(s) => {
-            let mut v = Vec::with_capacity(s.len());
             for &b in s {
                 v.push(b as u8)
             }
@@ -96,12 +108,10 @@ pub fn decode_store_pointer(o: &protocol::StorePointer) -> store::Pointer {
     };
     store::Pointer::new(o.store_index() as u8, x)
 }
-pub fn encode_store_pointer<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_store_pointer<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &store::Pointer) -> flatbuffers::WIPOffset<protocol::StorePointer<'bldr>> {
     
-    fn u8toi8(a: &[u8]) -> &[i8] {
-        std::mem::transmute::<&[u8], &[i8]>(a)
-    }
+    
     let (pool_index, dataOffset) = match o {
         store::Pointer::None{pool_index} => (pool_index, None),
         store::Pointer::Short{pool_index, nbytes, content, ..} => (pool_index, Some(builder.create_vector(u8toi8(&content[0..*nbytes as usize])))),
@@ -110,6 +120,28 @@ pub fn encode_store_pointer<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBu
     protocol::StorePointer::create(builder, &protocol::StorePointerArgs {
         store_index: *pool_index as i8,
         data: dataOffset
+    })
+}
+
+pub fn decode_key_revision(o: protocol::KeyRevision) -> requirements::KeyRevision {
+    let mut v = Vec::with_capacity(o.key().unwrap().len());
+    if let Some(key) = o.key() {
+        for &b in key {
+            v.push(b as u8);
+        }   
+    };
+    let key = object::Key::from_bytes(&v[..]);
+    requirements::KeyRevision {
+        key,
+        revision: decode_object_revision(o.revision().unwrap())
+    }
+}
+pub fn encode_key_revision<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+o: &requirements::KeyRevision) -> flatbuffers::WIPOffset<protocol::KeyRevision<'bldr>> {
+    let key = builder.create_vector(u8toi8(&o.key.as_bytes()[..]));
+    protocol::KeyRevision::create(builder, &protocol::KeyRevisionArgs{
+        key: Some(key),
+        revision: Some(&encode_object_revision(&o.revision))
     })
 }
 
@@ -150,14 +182,14 @@ pub fn decode_object_pointer(o: &protocol::ObjectPointer) -> object::Pointer {
         store_pointers: pointers
     }
 }
-pub fn encode_object_pointer<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_object_pointer<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &object::Pointer) -> flatbuffers::WIPOffset<protocol::ObjectPointer<'bldr>> {
 
     let size = if let Some(sz) = o.size { sz } else { 0 };
 
     let mut pointer_offsets = Vec::new();
 
-    for p in o.store_pointers {
+    for p in &o.store_pointers {
         pointer_offsets.push(encode_store_pointer(builder, &p));
     }
 
@@ -236,7 +268,7 @@ pub fn encode_data_update_operation(o: object::DataUpdateOperation) -> protocol:
 }
 
 pub fn decode_key_requirement(o: &protocol::KVReq) -> requirements::KeyRequirement {
-    let key = object::Key::from_bytes(std::mem::transmute::<&[i8], &[u8]>(o.key().unwrap()));
+    let key = object::Key::from_bytes(i8tou8(o.key().unwrap()));
     let timestamp = hlc::Timestamp::from(o.timestamp() as u64);
     match o.requirement() {
         protocol::KeyRequirement::Exists => requirements::KeyRequirement::Exists { key },
@@ -265,17 +297,20 @@ pub fn decode_key_requirement(o: &protocol::KVReq) -> requirements::KeyRequireme
         }
     }
 } 
-pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_key_requirement<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &requirements::KeyRequirement) -> flatbuffers::WIPOffset<protocol::KVReq<'bldr>> {
 
-    let args = match o {
+    let mut arevision: protocol::ObjectRevision = encode_object_revision(&object::Revision::nil());
+    let mut use_revision = false;
+
+    let mut args = match o {
         requirements::KeyRequirement::Exists{ key } => {
             protocol::KVReqArgs {
                 requirement: protocol::KeyRequirement::Exists,
                 timestamp: 0,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::MayExist{ key } => {
@@ -284,7 +319,7 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: 0,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::DoesNotExist{ key } => {
@@ -293,7 +328,7 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: 0,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::TimestampLessThan{ key, timestamp } => {
@@ -302,7 +337,7 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: timestamp.to_u64() as i64,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::TimestampGreaterThan{ key, timestamp } => {
@@ -311,7 +346,7 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: timestamp.to_u64() as i64,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::TimestampEquals{ key, timestamp } => {
@@ -320,16 +355,29 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: timestamp.to_u64() as i64,
                 revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::KeyRevision{ key, revision } => {
+            arevision = encode_object_revision(revision);
+            use_revision = true;
             protocol::KVReqArgs {
                 requirement: protocol::KeyRequirement::KeyRevision,
                 timestamp: 0,
-                revision: Some(&encode_object_revision(revision)),
+                revision: None,
                 comparison: protocol::KeyComparison::ByteArray,
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
+            }
+        },
+        requirements::KeyRequirement::KeyObjectRevision{ key, revision } => {
+            arevision = encode_object_revision(revision);
+            use_revision = true;
+            protocol::KVReqArgs {
+                requirement: protocol::KeyRequirement::KeyObjectRevision,
+                timestamp: 0,
+                revision: None,
+                comparison: protocol::KeyComparison::ByteArray,
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
         requirements::KeyRequirement::WithinRange{ key, comparison } => {
@@ -338,10 +386,15 @@ pub fn encode_key_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBuffer
                 timestamp: 0,
                 revision: None,
                 comparison: encode_key_comparison(*comparison),
-                key: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(key.as_bytes()))),
+                key: Some(builder.create_vector(u8toi8(key.as_bytes()))),
             }
         },
     };
+
+    if use_revision {
+        args.revision = Some(&arevision);
+    }
+
     protocol::KVReq::create(builder, &args)
 }
 
@@ -392,20 +445,22 @@ pub fn decode_revision_lock(o: &protocol::RevisionLock) -> requirements::Transac
 pub fn decode_serialized_finalization_action(o: &protocol::SerializedFinalizationAction) -> transaction::SerializedFinalizationAction {
     let tid = decode_uuid(o.type_uuid().unwrap());
     let slice = o.data().unwrap();
-    let v:Vec<u8> = Vec::with_capacity(slice.len());
-    v.extend_from_slice(std::mem::transmute::<&[i8],&[u8]>(slice));
+    let mut v:Vec<u8> = Vec::with_capacity(slice.len());
+    v.extend_from_slice(i8tou8(slice));
 
     transaction::SerializedFinalizationAction {
         type_uuid: tid,
         data: v
     }
 }
-pub fn encode_serialized_finalization_action<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_serialized_finalization_action<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &transaction::SerializedFinalizationAction) -> flatbuffers::WIPOffset<protocol::SerializedFinalizationAction<'bldr>> {
+
+    let data = builder.create_vector(u8toi8(&o.data[..]));
 
     protocol::SerializedFinalizationAction::create(builder, &protocol::SerializedFinalizationActionArgs {
         type_uuid: Some(&encode_uuid(o.type_uuid)),
-        data: Some(builder.create_vector(std::mem::transmute::<&[u8],&[i8]>(&o.data[..])))
+        data: Some(data)
     })
 }
 
@@ -429,7 +484,7 @@ pub fn decode_local_time_requirement(o: &protocol::LocalTimeRequirement) -> requ
         requirement: tr
     }
 }
-pub fn encode_local_time_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_local_time_requirement<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
 o: &requirements::TimestampRequirement) -> flatbuffers::WIPOffset<protocol::LocalTimeRequirement<'bldr>> {
     let ts = match o {
         requirements::TimestampRequirement::Equals(ts) => ts.to_u64() as i64,
@@ -451,7 +506,7 @@ pub fn decode_store_id(o: &protocol::StoreId) -> store::Id {
         pool_index: index as u8
     }
 }
-pub fn encode_store_id<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+pub fn encode_store_id<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &store::Id) -> flatbuffers::WIPOffset<protocol::StoreId<'bldr>> {
 
     protocol::StoreId::create(builder, &protocol::StoreIdArgs {
@@ -495,10 +550,81 @@ pub fn decode_transaction_requirement(o: &protocol::TransactionRequirement) -> t
 
     return decode_local_time_requirement(&o.localtime().unwrap())
 }
-pub fn encode_transaction_requirement<'bldr>(builder: &'bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
-    o: &requirements::TimestampRequirement) -> flatbuffers::WIPOffset<protocol::TransactionRequirement<'bldr>> {
+pub fn encode_transaction_requirement<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+    o: &requirements::TransactionRequirement) -> flatbuffers::WIPOffset<protocol::TransactionRequirement<'bldr>> {
 
-    ()
+    let mut tr_builder = protocol::TransactionRequirementBuilder::new(builder);
+    match o {
+        requirements::TransactionRequirement::DataUpdate {pointer, required_revision, operation} => {
+            let wip = protocol::DataUpdate::create(builder, &protocol::DataUpdateArgs {
+                object_pointer: Some(encode_object_pointer(builder, &pointer)),
+                required_revision: Some(&encode_object_revision(&required_revision)),
+                operation: encode_data_update_operation(*operation)
+            });
+            tr_builder.add_data_update(wip);
+        },
+        requirements::TransactionRequirement::RefcountUpdate {pointer, required_refcount, new_refcount} => {
+            let wip = protocol::RefcountUpdate::create(builder, &protocol::RefcountUpdateArgs {
+                object_pointer: Some(encode_object_pointer(builder, &pointer)),
+                required_refcount: Some(&encode_object_refcount(&required_refcount)),
+                new_refcount: Some(&encode_object_refcount(&new_refcount))
+            });
+            tr_builder.add_refcount_update(wip);
+        },
+        requirements::TransactionRequirement::VersionBump {pointer, required_revision} => {
+            let wip = protocol::VersionBump::create(builder, &protocol::VersionBumpArgs {
+                object_pointer: Some(encode_object_pointer(builder, &pointer)),
+                required_revision: Some(&encode_object_revision(&required_revision)),
+            });
+            tr_builder.add_version_bump(wip);
+        },
+        requirements::TransactionRequirement::RevisionLock {pointer, required_revision} => {
+            let wip = protocol::RevisionLock::create(builder, &protocol::RevisionLockArgs {
+                object_pointer: Some(encode_object_pointer(builder, &pointer)),
+                required_revision: Some(&encode_object_revision(&required_revision)),
+            });
+            tr_builder.add_revision_lock(wip);
+        },
+        requirements::TransactionRequirement::LocalTime {requirement} => {
+            let wip = encode_local_time_requirement(builder, requirement);
+            tr_builder.add_localtime(wip);
+        },
+        requirements::TransactionRequirement::KeyValueUpdate {pointer, required_revision, full_content_lock, key_requirements} => {
+
+            let mut fcontent_offsets = Vec::new();
+
+            for kr in full_content_lock {
+                fcontent_offsets.push(encode_key_revision(builder, &kr));
+            }
+
+            let content_lock_vec = builder.create_vector(&fcontent_offsets[..]);
+
+            let mut req_offsets = Vec::new();
+
+            for r in key_requirements {
+                req_offsets.push(encode_key_requirement(builder, r));
+            }
+
+            let req_vec = builder.create_vector(&req_offsets[..]);
+
+            let wip = protocol::KeyValueUpdate::create(builder, &protocol::KeyValueUpdateArgs {
+                object_pointer: Some(encode_object_pointer(builder, &pointer)),
+                required_revision: required_revision.map( |r| &encode_object_revision(&r)),
+                content_lock: Some(content_lock_vec),
+                requirements: Some(req_vec)
+
+            });
+            tr_builder.add_kv_update(wip);
+        },
+    }
+    
+    tr_builder.finish()
+}
+
+pub fn deserialize_transaction_description(encoded: &ArcDataSlice) -> transaction::TransactionDescription {
+        
+    let proto = flatbuffers::get_root::<protocol::TransactionDescription>(encoded.as_bytes());
+    decode_transaction_description(&proto)
 }
 
 pub fn decode_transaction_description(o: &protocol::TransactionDescription) -> transaction::TransactionDescription {
@@ -506,7 +632,7 @@ pub fn decode_transaction_description(o: &protocol::TransactionDescription) -> t
     let start_ts = hlc::Timestamp::from(o.start_timestamp() as u64);
     let primary_object = decode_object_pointer(&o.primary_object().unwrap());
     let designated_leader = o.designated_leader_uid();
-    let originating_client = decode_uuid(o.originating_client().unwrap());
+    let originating_client = o.originating_client().map(|c| network::ClientId(decode_uuid(c)));
 
     let mut notify_on_resolution:Vec<store::Id> = Vec::new();
     if let Some(v) = o.notify_on_resolution() {
@@ -527,8 +653,61 @@ pub fn decode_transaction_description(o: &protocol::TransactionDescription) -> t
     let transaction_requirements: Vec<requirements::TransactionRequirement> = Vec::new();
     if let Some(v) = o.requirements() {
         for p in v {
-
+            transaction_requirements.push(decode_transaction_requirement(&p));
         }
     }
-    ()
+    
+    transaction::TransactionDescription {
+        id: txid,
+        serialized_transaction_description: None,
+        start_timestamp: start_ts,
+        primary_object: primary_object,
+        designated_leader: designated_leader as u8,
+        requirements: transaction_requirements,
+        finalization_actions: finalization_actions,
+        originating_client: originating_client,
+        notify_on_resolution: notify_on_resolution,
+        notes: vec![String::from(notes)]
+    }
+}
+
+pub fn encode_transaction_description<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
+o: &transaction::TransactionDescription) -> flatbuffers::WIPOffset<protocol::TransactionDescription<'bldr>> {
+
+    let mut rv = Vec::new();
+    for r in o.requirements {
+        rv.push(encode_transaction_requirement(builder, &r));
+    }
+    let requirements = builder.create_vector(&rv[..]);
+
+    let mut fa = Vec::new();
+    for f in o.finalization_actions {
+        fa.push(encode_serialized_finalization_action(builder, &f));
+    }
+    let serialized_fa = builder.create_vector(&fa[..]);
+
+    let mut n = Vec::new();
+    for st in o.notify_on_resolution {
+        n.push(encode_store_id(builder, &st));
+    }
+    let notify = builder.create_vector(&n[..]);
+
+    let notes_str = String::new();
+    for note in o.notes {
+        notes_str.push_str(&note);
+    }
+    let notes = builder.create_vector(u8toi8(notes_str.as_bytes()));
+
+    //builder.create_vector(u8toi8(&o.data[..]))
+    protocol::TransactionDescription::create(builder, &protocol::TransactionDescriptionArgs {
+        transaction_uuid: Some(&encode_uuid(o.id.0)),
+        start_timestamp: o.start_timestamp.to_u64() as i64,
+        primary_object: Some(encode_object_pointer(builder, &o.primary_object)),
+        designated_leader_uid: o.designated_leader as i8,
+        requirements: Some(requirements),
+        finalization_actions: Some(serialized_fa),
+        originating_client: o.originating_client.map(|c| &encode_uuid(c.0)),
+        notify_on_resolution: Some(notify),
+        notes: Some(notes)
+    })
 }

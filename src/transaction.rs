@@ -6,6 +6,7 @@ use crate::ArcDataSlice;
 use crate::hlc;
 use crate::network;
 use crate::store;
+use crate::encoding;
 
 pub mod applyer;
 pub mod checker;
@@ -93,11 +94,11 @@ pub struct ObjectUpdate {
 pub struct SerializedFinalizationAction{
     pub type_uuid: uuid::Uuid,
     pub data: Vec<u8>
-};
+}
 
 pub struct TransactionDescription {
     pub id: Id,
-    pub serialized_transaction_description: ArcDataSlice,
+        serialized_transaction_description: Option<ArcDataSlice>,
     pub start_timestamp: hlc::Timestamp,
     pub primary_object: object::Pointer,
     pub designated_leader: u8,
@@ -110,8 +111,22 @@ pub struct TransactionDescription {
 
 impl TransactionDescription {
 
-    pub fn deserialize(encoded: ArcDataSlice) -> TransactionDescription {
+    pub fn deserialize(encoded: &ArcDataSlice) -> TransactionDescription {
+        encoding::deserialize_transaction_description(encoded)
+    }
 
+    pub fn serialized_transaction_description(&self) -> ArcDataSlice {
+        match self.serialized_transaction_description {
+            Some(std) => std,
+            None => {
+                let mut builder = flatbuffers::FlatBufferBuilder::new_with_capacity(4096);
+                encoding::encode_transaction_description(&mut builder, self);
+                let buf = builder.finished_data();
+                let ads = ArcDataSlice::from_bytes(buf);
+                self.serialized_transaction_description = Some(ads);
+                ads
+            }
+        }
     }
 
     pub fn designated_leader_store_id(&self) -> store::Id {
