@@ -1,6 +1,6 @@
 use std::sync;
 
-use crossbeam::crossbeam_channel;
+use crossbeam_channel;
 use tempdir::TempDir;
 
 use aspen_server::data::*;

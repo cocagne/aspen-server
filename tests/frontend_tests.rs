@@ -99,6 +99,7 @@ impl TS {
             pool_id: self.pool_id,
             size: None,
             ida: IDA::Replication{ width: 3, write_threshold: 2},
+            object_type: object::ObjectType::Data,
             store_pointers: vec![sp.clone()]
         }
     }
@@ -283,22 +284,21 @@ fn successful_transaction() {
 
     let r = ts.forwarding_read(ts.oid1);
 
-    let txd = transaction::TransactionDescription {
-        id: ts.txid2,
-        serialized_transaction_description: ArcDataSlice::from_vec(Vec::new()),
-        start_timestamp: hlc::Timestamp::from(3),
-        primary_object: ts.get_ptr(&ts.oid1),
-        designated_leader: 1,
-        requirements: vec![transaction::requirements::TransactionRequirement::DataUpdate{
+    let txd = transaction::TransactionDescription::new(
+        ts.txid2,
+        hlc::Timestamp::from(3),
+        ts.get_ptr(&ts.oid1),
+        1,
+        vec![transaction::requirements::TransactionRequirement::DataUpdate{
             pointer : ts.get_ptr(&ts.oid1),
             required_revision: r.metadata.revision,
             operation: object::DataUpdateOperation::Append
         }],
-        finalization_actions: Vec::new(),
-        originating_client: None,
-        notify_on_resolution: Vec::new(),
-        notes: Vec::new()
-    };
+        Vec::new(),
+        None,
+        Vec::new(),
+        Vec::new()
+    );
 
     let mut object_updates = HashMap::new();
 
@@ -365,22 +365,21 @@ fn successful_transaction_on_allocating_object() {
 
     let r = ts.forwarding_read(ts.oid1);
 
-    let txd = transaction::TransactionDescription {
-        id: ts.txid2,
-        serialized_transaction_description: ArcDataSlice::from_vec(Vec::new()),
-        start_timestamp: hlc::Timestamp::from(3),
-        primary_object: ts.get_ptr(&ts.oid1),
-        designated_leader: 1,
-        requirements: vec![transaction::requirements::TransactionRequirement::DataUpdate{
+    let txd = transaction::TransactionDescription::new(
+        ts.txid2,
+        hlc::Timestamp::from(3),
+        ts.get_ptr(&ts.oid1),
+        1,
+        vec![transaction::requirements::TransactionRequirement::DataUpdate{
             pointer : ts.get_ptr(&ts.oid1),
             required_revision: r.metadata.revision,
             operation: object::DataUpdateOperation::Append
         }],
-        finalization_actions: Vec::new(),
-        originating_client: None,
-        notify_on_resolution: Vec::new(),
-        notes: Vec::new()
-    };
+        Vec::new(),
+        None,
+        Vec::new(),
+        Vec::new()
+    );
 
     let mut object_updates = HashMap::new();
 
@@ -459,13 +458,12 @@ fn successful_transaction_with_local_errors() {
     let mut p2 = ts.get_ptr(&ts.oid1);
     p2.id = ts.oid2;
 
-    let txd = transaction::TransactionDescription {
-        id: ts.txid2,
-        serialized_transaction_description: ArcDataSlice::from_vec(Vec::new()),
-        start_timestamp: hlc::Timestamp::from(3),
-        primary_object: ts.get_ptr(&ts.oid1),
-        designated_leader: 1,
-        requirements: vec![
+    let txd = transaction::TransactionDescription::new(
+        ts.txid2,
+        hlc::Timestamp::from(3),
+        ts.get_ptr(&ts.oid1),
+        1,
+        vec![
             transaction::requirements::TransactionRequirement::DataUpdate{
                 pointer : ts.get_ptr(&ts.oid1),
                 required_revision: r.metadata.revision,
@@ -476,11 +474,11 @@ fn successful_transaction_with_local_errors() {
                 required_revision: r.metadata.revision,
                 operation: object::DataUpdateOperation::Append
             }],
-        finalization_actions: Vec::new(),
-        originating_client: None,
-        notify_on_resolution: Vec::new(),
-        notes: Vec::new()
-    };
+        Vec::new(),
+        None,
+        Vec::new(),
+        Vec::new()
+    );
 
     let mut object_updates = HashMap::new();
 

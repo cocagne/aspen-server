@@ -111,22 +111,49 @@ pub struct TransactionDescription {
 
 impl TransactionDescription {
 
+    pub fn new(id: Id, 
+            start_timestamp: hlc::Timestamp,
+            primary_object: object::Pointer,
+            designated_leader: u8,
+            requirements: Vec<TransactionRequirement>,
+            finalization_actions: Vec<SerializedFinalizationAction>,
+            originating_client: Option<network::ClientId>,
+            notify_on_resolution: Vec<store::Id>,
+            notes: Vec<String>) -> TransactionDescription {
+
+        TransactionDescription {
+            id,
+            serialized_transaction_description: None,
+            start_timestamp,
+            primary_object,
+            designated_leader,
+            requirements,
+            finalization_actions,
+            originating_client,
+            notify_on_resolution,
+            notes
+        }
+    }
+
     pub fn deserialize(encoded: &ArcDataSlice) -> TransactionDescription {
         encoding::deserialize_transaction_description(encoded)
     }
 
-    pub fn serialized_transaction_description(&self) -> ArcDataSlice {
-        match self.serialized_transaction_description {
-            Some(std) => std,
+    pub fn serialized_transaction_description(&mut self) -> ArcDataSlice {
+        
+        let ads = match &self.serialized_transaction_description {
+            Some(sd) => sd.clone(),
             None => {
                 let mut builder = flatbuffers::FlatBufferBuilder::new_with_capacity(4096);
-                encoding::encode_transaction_description(&mut builder, self);
+                let etd = encoding::encode_transaction_description(&mut builder, self);
+                builder.finish(etd, None);
                 let buf = builder.finished_data();
-                let ads = ArcDataSlice::from_bytes(buf);
-                self.serialized_transaction_description = Some(ads);
-                ads
+                ArcDataSlice::from_bytes(buf)
             }
-        }
+        };
+        let r = ads.clone();
+        self.serialized_transaction_description = Some(ads);
+        r
     }
 
     pub fn designated_leader_store_id(&self) -> store::Id {

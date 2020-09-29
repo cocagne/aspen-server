@@ -108,7 +108,7 @@ impl Pointer {
                         nbytes: c.len() as u8,
                         content: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
                     };
-                    if let Pointer::Short {content, ..} = s {
+                    if let Pointer::Short {mut content, ..} = s {
                         content.copy_from_slice(c);
                     }
                     s
@@ -306,7 +306,7 @@ impl ObjectCache for LruObjectCache {
     fn get(&mut self, object_id: &object::Id) -> Option<&Rc<RefCell<State>>> {
         match self.cache.get_mut(object_id) {
             None => None,
-            Some(r) => Some(&r)
+            Some(r) => Some(r)
         }
     }
 
