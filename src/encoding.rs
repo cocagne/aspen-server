@@ -1,7 +1,7 @@
 // import the flatbuffers runtime library
 extern crate flatbuffers;
 // import the generated code
-#[allow(dead_code, unused_imports)]
+#[allow(dead_code, unused_imports, non_snake_case)]
 #[path = "./network_protocol_generated.rs"]
 mod network_protocol_generated;
 pub use network_protocol_generated::com::ibm::amoeba::common::network::protocol;
@@ -112,14 +112,14 @@ pub fn encode_store_pointer<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffer
     o: &store::Pointer) -> flatbuffers::WIPOffset<protocol::StorePointer<'bldr>> {
     
     
-    let (pool_index, dataOffset) = match o {
+    let (pool_index, data_offset) = match o {
         store::Pointer::None{pool_index} => (pool_index, None),
         store::Pointer::Short{pool_index, nbytes, content, ..} => (pool_index, Some(builder.create_vector(u8toi8(&content[0..*nbytes as usize])))),
         store::Pointer::Long{pool_index, content} => (pool_index, Some(builder.create_vector(u8toi8(&content[..])))),
     };
     protocol::StorePointer::create(builder, &protocol::StorePointerArgs {
         store_index: *pool_index as i8,
-        data: dataOffset
+        data: data_offset
     })
 }
 
@@ -559,7 +559,7 @@ pub fn decode_transaction_requirement(o: &protocol::TransactionRequirement) -> t
 pub fn encode_transaction_requirement<'bldr, 'mut_bldr>(builder: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>, 
     o: &requirements::TransactionRequirement) -> flatbuffers::WIPOffset<protocol::TransactionRequirement<'bldr>> {
 
-    let mut tr_builder = match o {
+    let tr_builder = match o {
         requirements::TransactionRequirement::DataUpdate {pointer, required_revision, operation} => {
             let op = encode_object_pointer(builder, &pointer);
             let wip = protocol::DataUpdate::create(builder, &protocol::DataUpdateArgs {

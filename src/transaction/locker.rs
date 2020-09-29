@@ -20,7 +20,7 @@ pub fn lock_requirements(
             TransactionRequirement::RefcountUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::DataUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::KeyValueUpdate{pointer, required_revision, full_content_lock, key_requirements} => {
-                lock_kv_requirements(tx_id, objects.get_mut(&pointer.id).unwrap(), &key_requirements);
+                lock_kv_requirements(tx_id, objects.get_mut(&pointer.id).unwrap(), &full_content_lock, &key_requirements);
                 required_revision.map( |_| pointer)
             },
         };
@@ -35,6 +35,7 @@ pub fn lock_requirements(
 fn lock_kv_requirements(
     tx_id: transaction::Id,
     state: &mut TxStateRef,
+    full_content_lock: &Vec<transaction::requirements::KeyRevision>,
     key_requirements: &Vec<KeyRequirement>) {
 
     let mut s = state.borrow_mut();
@@ -43,6 +44,10 @@ fn lock_kv_requirements(
 
     {
         let kv = s.kv_state.as_mut().unwrap();
+
+        for kr in full_content_lock {
+            kv.content.get_mut(&kr.key).unwrap().locked_to_transaction = Some(tx_id);
+        }
 
         for r in key_requirements {
             match r {
@@ -95,7 +100,7 @@ pub fn unlock_requirements(
             TransactionRequirement::RefcountUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::DataUpdate{pointer, ..} => Some(pointer),
             TransactionRequirement::KeyValueUpdate{pointer, required_revision, full_content_lock, key_requirements} => {
-                unlock_kv_requirements(objects.get_mut(&pointer.id).unwrap(), &key_requirements);
+                unlock_kv_requirements(objects.get_mut(&pointer.id).unwrap(), &full_content_lock, &key_requirements);
                 required_revision.map( |_| pointer)
             },
         };
@@ -109,6 +114,7 @@ pub fn unlock_requirements(
 
 fn unlock_kv_requirements(
     state: &mut TxStateRef,
+    full_content_lock: &Vec<transaction::requirements::KeyRevision>,
     key_requirements: &Vec<KeyRequirement>) {
 
     let mut s = state.borrow_mut();
@@ -116,6 +122,10 @@ fn unlock_kv_requirements(
 
     {
         let kv = s.kv_state.as_mut().unwrap();
+
+        for kr in full_content_lock {
+            kv.content.get_mut(&kr.key).unwrap().locked_to_transaction = None;
+        }
 
         for r in key_requirements {
             match r {

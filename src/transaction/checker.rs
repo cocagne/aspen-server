@@ -232,7 +232,21 @@ fn check_kv_requirements(
         Ok(())
     };
 
+
     if let Some(kv) = s.kv_state() {
+
+        for kr in full_content_lock {
+            match kv.content.get(&kr.key) {
+                None => return Err(ReqErr::KeyExistenceError),
+                Some(kvs) => {
+                    if kvs.revision != kr.revision {
+                        return Err(ReqErr::RevisionMismatch)
+                    }
+                    check_lock(kvs)?
+                }
+            }
+        }
+
         for r in key_requirements {
             match r {
                 KeyRequirement::Exists{key} => {

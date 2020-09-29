@@ -119,7 +119,7 @@ impl Frontend {
                 object_updates: object_updates,
                 pre_tx_rebuilds: Vec::new()
             };
-            let mut object_locaters: HashMap<object::Id, store::Pointer> = p.txd.hosted_objects(txr.store_id);
+            let object_locaters: HashMap<object::Id, store::Pointer> = p.txd.hosted_objects(txr.store_id);
 
             let mut t = Tx::new(txr.store_id, p, &object_locaters, &self.backend, &self.crl, &self.net);
             t.load_saved_state(txr.tx_disposition, txr.paxos_state);

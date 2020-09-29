@@ -22,7 +22,7 @@ impl KeyComparison {
         let l = left.as_bytes();
         let r = right.as_bytes();
         match self {
-            ByteArray => {
+            KeyComparison::ByteArray => {
                 let min = if left.len() > right.len() { left.len() } else { right.len() };
 
                 for i in 0..min {
@@ -41,7 +41,7 @@ impl KeyComparison {
                 }
                 0
             },
-            Integer => {
+            KeyComparison::Integer => {
                 if l.len() == 0 && r.len() == 0 {
                     return 0
                 }
@@ -52,18 +52,18 @@ impl KeyComparison {
                     return 1
                 }
             
-                let bigL = num_bigint::BigInt::from_signed_bytes_be(l);
-                let bigR = num_bigint::BigInt::from_signed_bytes_be(r);
+                let big_l = num_bigint::BigInt::from_signed_bytes_be(l);
+                let big_r = num_bigint::BigInt::from_signed_bytes_be(r);
                 
-                if bigL < bigR {
+                if big_l < big_r {
                     return -1
                 }
-                if bigL > bigR {
+                if big_l > big_r {
                     return 1
                 }
                 return 0
             },
-            Lexical => {
+            KeyComparison::Lexical => {
                 let sl = String::from_utf8_lossy(l);
                 let sr = String::from_utf8_lossy(r);
 
