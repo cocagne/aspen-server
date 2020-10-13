@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use time;
+use std::time::Instant;
 
 use crate::crl;
 use crate::data::ArcDataSlice;
@@ -45,7 +46,7 @@ pub struct Tx {
     pending_object_commits: usize,
     delayed_prepare: DelayedPrepareResponse,
     delayed_accept: DelayedAcceptResponse,
-    last_event: time::PreciseTime,
+    last_event: std::time::Instant,
     save_object_updates: bool,
     next_crl_save: crl::TxSaveId,
     skipped_commits: Vec<object::Id>,
@@ -88,7 +89,7 @@ impl Tx {
                 response: None,
                 save_id: crl::TxSaveId(0)
             },
-            last_event: time::PreciseTime::now(),
+            last_event: std::time::Instant::now(),
             save_object_updates: true,
             next_crl_save: crl::TxSaveId(1),
             skipped_commits: Vec::new(),
@@ -111,7 +112,19 @@ impl Tx {
     }
 
     fn update_last_event(&mut self) {
-        self.last_event = time::PreciseTime::now();
+        self.last_event = std::time::Instant::now();
+    }
+
+    pub fn get_store_id(&self) -> store::Id {
+        self.store_id
+    }
+    
+    pub fn get_messenger(&self) -> &Rc<dyn network::Messenger> {
+        &self.net
+    }
+
+    pub fn get_last_event_timestamp(&self) -> std::time::Instant {
+        self.last_event
     }
 
     pub fn object_loaded(&mut self, state: &Rc<std::cell::RefCell<store::State>>) {

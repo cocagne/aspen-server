@@ -36,6 +36,8 @@ pub struct Prepare {
     pub object_updates: HashMap<object::Id, ArcDataSlice>,
     pub pre_tx_rebuilds: Vec<PreTransactionOpportunisticRebuild>,
 }
+
+#[derive(Clone)]
 pub struct PrepareResponse {
     pub to: store::Id,
     pub from: store::Id,
@@ -123,6 +125,21 @@ impl Message {
             Message::Heartbeat(m) => m.to,
             Message::StatusRequest(m) => m.to,
             Message::StatusResponse(m) => m.to,
+        }
+    }
+
+    pub fn get_txid(&self) -> transaction::Id {
+        match self {
+            Message::Prepare(m) => m.txd.id,
+            Message::PrepareResponse(m) => m.txid,
+            Message::Accept(m) => m.txid,
+            Message::AcceptResponse(m) => m.txid,
+            Message::Resolved(m) => m.txid,
+            Message::Committed(m) => m.txid,
+            Message::Finalized(m) => m.txid,
+            Message::Heartbeat(m) => m.txid,
+            Message::StatusRequest(m) => m.txid,
+            Message::StatusResponse(m) => m.txid,
         }
     }
 }

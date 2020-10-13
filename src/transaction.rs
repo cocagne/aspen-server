@@ -10,6 +10,7 @@ use crate::encoding;
 
 pub mod applyer;
 pub mod checker;
+pub mod driver;
 pub mod locker;
 pub mod messages;
 pub mod requirements;

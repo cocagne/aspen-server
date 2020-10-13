@@ -53,7 +53,7 @@ enum PendingAllocation {
 }
 
 pub struct Frontend {
-    store_id: store::Id,
+    pub store_id: store::Id,
     backend: Rc<dyn Backend>,
     object_cache: Box<dyn ObjectCache>,
     crl: Rc<dyn crl::Crl>,
@@ -63,7 +63,7 @@ pub struct Frontend {
     resolved_cache: messages::MessageCache<messages::Resolved>,
     pending_reads: HashMap<object::Id, Box<Vec<Either<NetRead, TxRead>>>>,
     pending_allocations: HashMap<transaction::Id, PendingAllocation>,
-    transactions: HashMap<transaction::Id, transaction::tx::Tx>
+    pub transactions: HashMap<transaction::Id, transaction::tx::Tx>
 }
 
 impl Frontend {
