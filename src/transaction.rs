@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::object;
@@ -97,6 +97,7 @@ pub struct SerializedFinalizationAction{
     pub data: Vec<u8>
 }
 
+#[derive(Clone)]
 pub struct TransactionDescription {
     pub id: Id,
         serialized_transaction_description: Option<ArcDataSlice>,
@@ -188,5 +189,26 @@ impl TransactionDescription {
         }
 
         h
+    }
+
+    pub fn all_objects(&self) -> HashSet<object::Pointer> {
+        let mut s: HashSet<object::Pointer> = HashSet::new();
+
+        let mut f = |ptr: &object::Pointer| {
+            s.insert(ptr.clone());
+        };
+
+        for r in &self.requirements {
+            match r {
+                TransactionRequirement::LocalTime{..}               => (),
+                TransactionRequirement::RevisionLock{pointer, ..}   => f(pointer),
+                TransactionRequirement::VersionBump{pointer, ..}    => f(pointer),
+                TransactionRequirement::RefcountUpdate{pointer, ..} => f(pointer),
+                TransactionRequirement::DataUpdate{pointer, ..}     => f(pointer),
+                TransactionRequirement::KeyValueUpdate{pointer, ..} => f(pointer),
+            }
+        }
+
+        s
     }
 }

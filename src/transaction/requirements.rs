@@ -160,6 +160,7 @@ impl fmt::Display for KeyRequirement{
     }
 }
 
+#[derive(Clone)]
 pub enum TransactionRequirement {
     LocalTime {
         requirement: TimestampRequirement

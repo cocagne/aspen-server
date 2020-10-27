@@ -105,7 +105,6 @@ impl fmt::Display for DataUpdateOperation {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
     pub revision: Revision,
@@ -127,6 +126,18 @@ pub struct Pointer {
     pub ida: ida::IDA,
     pub object_type: ObjectType,
     pub store_pointers: Vec<store::Pointer>
+}
+
+impl Hash for Pointer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Pointer {
+    pub fn get_valid_acceptor_set(&self) -> HashSet<u8> {
+        self.store_pointers.iter().map(|s| s.pool_index()).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

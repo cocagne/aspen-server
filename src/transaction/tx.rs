@@ -105,6 +105,14 @@ impl Tx {
         self.acceptor.load_saved_state(saved_state);
     }
 
+    pub fn clone_transaction_description(&self) -> transaction::TransactionDescription {
+        self.txd.clone()
+    }
+
+    pub fn get_txd(&self) -> &transaction::TransactionDescription {
+        &self.txd
+    }
+
     fn get_save_id(&mut self) -> crl::TxSaveId {
         let save_id = self.next_crl_save;
         self.next_crl_save = self.next_crl_save.next();
@@ -118,7 +126,7 @@ impl Tx {
     pub fn get_store_id(&self) -> store::Id {
         self.store_id
     }
-    
+
     pub fn get_messenger(&self) -> &Rc<dyn network::Messenger> {
         &self.net
     }
