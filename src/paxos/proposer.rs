@@ -41,7 +41,7 @@ impl Proposer {
         self.prepare_quorum_reached() && have_proposal
     }
 
-    fn proposal_value(&self) -> Option<bool> {
+    pub fn proposal_value(&self) -> Option<bool> {
         if self.prepare_quorum_reached() {
             match self.highest_accepted {
                 Some(t) => Some(t.1),

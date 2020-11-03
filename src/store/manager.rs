@@ -17,6 +17,7 @@ use crate::store;
 use crate::store::backend;
 use crate::store::frontend;
 use crate::transaction;
+use crate::finalizer;
 
 pub enum StoreLoadResult {
     Success(store::Id),
@@ -66,6 +67,7 @@ pub struct StoreManager {
     stores: HashMap<store::Id, StoreState>,
     crl: Rc<dyn crl::Crl>,
     net: Rc<dyn network::Messenger>,
+    finalizer_factory: Rc<dyn finalizer::FinalizerFactory>,
     tx_timeout: Duration,
 }
 
@@ -95,7 +97,7 @@ impl StoreManager {
             for (txid, tx) in &store.frontend.transactions {
                 if now.duration_since(tx.get_last_event_timestamp()) > self.tx_timeout {
                     if ! store.tx_drivers.contains_key(txid) {
-                        store.tx_drivers.insert(*txid, transaction::driver::Driver::recover(tx));
+                        store.tx_drivers.insert(*txid, transaction::driver::Driver::recover(tx, &self.finalizer_factory));
                     }
                 }
             }
@@ -148,7 +150,10 @@ impl StoreManager {
                         match store.tx_drivers.get_mut(&msg.get_txid()) {
                             Some(_) => {},
                             None => {
-                                let mut driver = transaction::driver::Driver::new(store.frontend.store_id, &self.net, p);
+                                let mut driver = transaction::driver::Driver::new(store.frontend.store_id, 
+                                                                                  &self.net, 
+                                                                                  &self.finalizer_factory, 
+                                                                                  p);
 
                                 match store.prep_responses.get_mut(&p.txd.id) {
                                     Some(v) => {

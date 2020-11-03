@@ -18,6 +18,10 @@ impl Learner {
             resolved_value: None
         }
     }
+
+    pub fn final_value(&self) -> Option<bool> {
+        self.resolved_value
+    }
     
     pub fn receive_accepted(
         &mut self, 
